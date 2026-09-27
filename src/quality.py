@@ -16,6 +16,7 @@ FIRST_PERSON_PATTERNS = (
 )
 _FIRST_PERSON_RE = re.compile('|'.join(FIRST_PERSON_PATTERNS))
 _LINK_RE = re.compile(r'https?://|www\.')
+CHECK_EFFORT = 'low'  # 사실검증은 원문과 대조만 하면 돼서 생각하는 양을 낮춘다 (원고 쓰기는 기본값 유지)
 
 
 def part_issues(name: str, body: str, tail: str = '') -> list[str]:
@@ -59,7 +60,7 @@ def rule_issues(body: str, tail: str = '') -> list[str]:
 def fact_problems(llm: LLMClient, model: str, body: str, source: str) -> tuple[list[str], list[str]]:
     """(탈락 사유, 근거 없는 문장). 문장 목록은 구제 발행에서 뺄 줄을 찾는 데 쓴다."""
     user_input = f'--- 기사 본문 ---\n{source}\n\n--- Threads 글 ---\n{body}'
-    result = llm.parse(model, load_prompt('factcheck'), user_input, FactCheck)
+    result = llm.parse(model, load_prompt('factcheck'), user_input, FactCheck, effort=CHECK_EFFORT)
     bad = [c for c in result.claims if c.kind == 'unsupported_fact']
     return [f'원문에 근거 없는 사실: "{c.sentence}" ({c.reason})' for c in bad], [c.sentence for c in bad]
 
