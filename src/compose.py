@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from src import channel, patterns, quality, selector
+from src import channel, patterns, quality, rescue, selector
 from src.history import HistoryEntry
 from src.llm import LLMClient, load_prompt
 from src.models import Candidate, ThreadPost
@@ -41,6 +41,7 @@ class Draft:
     parts: tuple[str, ...]    # 첫 글, 답글(들) — 최종 게시 문구
     source_url: str
     kind: str = NEWS
+    rescued: bool = False     # 검수를 통과하지 못해 문제 줄을 빼고 낸 글 (구제 발행)
 
     @property
     def text(self) -> str:
@@ -81,21 +82,49 @@ def assemble(post: ThreadPost, tail: str, kind: str) -> tuple[str, ...]:
     return post.hook.strip(), post.tips.strip() + tail
 
 
+@dataclass(frozen=True)
+class Attempt:
+    """검수에 떨어진 뉴스 원고 (구제 발행 후보)."""
+    article: Candidate
+    post: ThreadPost
+    tail: str
+    issues: tuple[str, ...]
+    bad_sentences: tuple[str, ...]
+
+
 def write_checked(llm: LLMClient, models: Models, prompt: str, user_input: str, tail: str, kind: str,
-                  source: str | None) -> tuple[str, ...] | None:
-    """source가 있으면(뉴스) 원문 대조 사실 검증까지 합니다. 제품 글은 제품명 밖의 사실을 규칙으로 막는다."""
+                  source: str | None, article: Candidate | None = None) -> tuple[tuple[str, ...] | None, Attempt | None]:
+    """(통과한 글, None) 또는 (None, 가장 나은 탈락 원고)를 반환합니다.
+
+    source가 있으면(뉴스) 원문 대조 사실 검증까지 합니다. 제품 글은 제품명 밖의 사실을 규칙으로 막는다.
+    """
     feedback: tuple[str, ...] = ()
+    best: Attempt | None = None
     for attempt in range(1, MAX_WRITE_ATTEMPTS + 1):
         extra = ('\n\n이전 글이 자동 검수에서 탈락했어. 아래를 고쳐서 다시 써:\n' + '\n'.join(f'- {f}' for f in feedback)) if feedback else ''
         post = llm.parse(models.writer, load_prompt(prompt), user_input + extra, ThreadPost)
         issues = check_post(post, tail, kind)
-        if not issues and source is not None:
-            issues = quality.check_facts(llm, models.fast, f'{post.hook}\n{post.tips}', source)
+        bad: list[str] = []
+        if source is not None:
+            fact_issues, bad = quality.fact_problems(llm, models.fast, f'{post.hook}\n{post.tips}', source)
+            issues += fact_issues
         if not issues:
             print(f'[검수 통과] 시도 {attempt}')
-            return assemble(post, tail, kind)
+            return assemble(post, tail, kind), None
         print(f'[검수 탈락] 시도 {attempt}: ' + ' / '.join(issues))
         feedback = tuple(issues)
+        if article is not None and (best is None or len(issues) <= len(best.issues)):
+            best = Attempt(article, post, tail, tuple(issues), tuple(bad))
+    return None, best
+
+
+def rescue_best(attempts: Sequence[Attempt]) -> Draft | None:
+    """문제가 적은 원고부터 문제 줄을 빼 보고, 내용이 충분히 남는 첫 원고를 반환합니다."""
+    for a in sorted(attempts, key=lambda a: len(a.issues)):
+        parts = rescue.rescue(a.post.hook, a.post.tips, a.bad_sentences, a.tail)
+        if parts:
+            print(f'[구제 발행] {a.article.title} (문제 {len(a.issues)}건의 줄을 빼고 게시)')
+            return Draft(a.article.doc_id, a.article.title, parts, a.article.link, rescued=True)
     return None
 
 
@@ -107,7 +136,7 @@ def next_product(products: Sequence[Product], history: Sequence[HistoryEntry]) -
 
 def compose_product(llm: LLMClient, models: Models, product: Product) -> Draft | None:
     user_input = f'제품명: {product.name}\n{patterns.pattern_brief(product.url, product=True)}'
-    parts = write_checked(llm, models, 'product', user_input, product_tail(product), PRODUCT, source=None)
+    parts, _ = write_checked(llm, models, 'product', user_input, product_tail(product), PRODUCT, source=None)
     return Draft(product.url, product.name, parts, product.url, PRODUCT) if parts else None
 
 
@@ -121,6 +150,7 @@ def compose_news(
     ranked = selector.rank_candidates(llm, models.fast, candidates, history, today)
     print(f'[선별] 기준 통과 {len(ranked)}건')
     promo = wants_cross_promo(history)
+    attempts: list[Attempt] = []
     for article in ranked[:MAX_ARTICLE_ATTEMPTS]:
         print(f'[기사 시도] {article.publisher}: {article.title}')
         body = fetch_body(article)
@@ -128,10 +158,16 @@ def compose_news(
             continue
         user_input = (f'매체: {article.publisher}\n기사 제목: {article.title}\n독자 포인트: {article.angle}\n'
                       f'{patterns.pattern_brief(article.doc_id)}\n--- 기사 본문 ---\n{body}')
-        parts = write_checked(llm, models, 'writer', user_input, source_tail(article, promo), NEWS, source=body)
+        parts, failed = write_checked(llm, models, 'writer', user_input, source_tail(article, promo), NEWS,
+                                      source=body, article=article)
         if parts:
             return Draft(article.doc_id, article.title, parts, article.link)
-    raise PipelineError('게시할 글을 만들지 못했습니다 (쓸 만한 기사가 없거나 검수 탈락).')
+        if failed:
+            attempts.append(failed)
+    draft = rescue_best(attempts)
+    if draft:
+        return draft
+    raise PipelineError('게시할 글을 만들지 못했습니다 (읽을 수 있는 기사가 없음: RSS·기사 사이트 장애 가능성).')
 
 
 def compose(

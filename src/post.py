@@ -21,6 +21,7 @@ from src.runlog import PostRecord
 from src.threads import ThreadsClient, ThreadsError
 
 PUBLISHING = 'PUBLISHING'
+RESCUED_NOTE = '구제 발행'
 
 
 @dataclass(frozen=True)
@@ -62,13 +63,13 @@ def post_slot(key: str, deps: PostDeps, llm: LLMClient, past: tuple[history.Hist
     container = deps.client.create_text(draft.parts[0])
     entry = history.HistoryEntry(slot=key, status=PUBLISHING, title=draft.title, seed=draft.kind,
                                  doc_id=draft.key, source_url=draft.source_url, caption=draft.text,
-                                 updated_at=_stamp(now))
+                                 note=RESCUED_NOTE if draft.rescued else '', updated_at=_stamp(now))
     history.save_history(history.upsert(past, entry))
     deps.client.wait_before_publish()
     media_id = deps.client.publish(container)
     done = history.with_status(entry, history.PUBLISHED, media_id=media_id)
     history.save_history(history.upsert(history.load_history(), done))
-    note = publish_replies(deps.client, media_id, draft.parts[1:])
+    note = ' / '.join(n for n in (entry.note, publish_replies(deps.client, media_id, draft.parts[1:])) if n)
     try:
         done = history.with_status(done, history.PUBLISHED, permalink=deps.client.permalink(media_id), note=note)
     except ThreadsError as e:
@@ -105,7 +106,8 @@ def run_post(env: Mapping[str, str], deps: PostDeps, telegram: notifier.Telegram
             past = history.load_history()
             posts.append(PostRecord(done.title, done.status, key, done.permalink))
             kind = '제품 추천' if done.seed == compose.PRODUCT else '뉴스'
-            notifier.notify(telegram, f'✅ {kind} 게시: {done.title}\n{done.permalink or "(주소 조회 실패)"}')
+            mark = '⚠️ 검수 문제 줄을 빼고' if RESCUED_NOTE in done.note else '✅'
+            notifier.notify(telegram, f'{mark} {kind} 게시: {done.title}\n{done.permalink or "(주소 조회 실패)"}')
         except (compose.PipelineError, LLMError) as e:
             errors.append(f'{key}: {e}')
             past = history.upsert(past, history.HistoryEntry(key, history.FAILED, note=str(e)[:300], updated_at=_stamp(now)))

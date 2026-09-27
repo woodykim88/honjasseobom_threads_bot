@@ -315,3 +315,35 @@ def test_post_pending_publishes_saved_draft_once(tmp_path):
     post.save_pending(draft, '2026-09-27T13:40', path)
     assert post.run_pending(c, None, AT_20, path).outcome == 'skipped'  # 같은 슬롯 두 번 안 올림
     assert post.run_pending(c, None, AT_20, path).outcome == 'skipped'  # 파일 없음
+
+
+# --- 구제 발행: 검수에 다 떨어져도 문제 줄만 빼고 게시 ---
+
+from src import rescue  # noqa: E402
+
+BAD_TIPS = TIPS.replace('3. 분쟁 생기면 소비자상담센터부터', '3. 분쟁이 50% 늘었대 무조건 확인')
+
+
+def test_rescue_drops_bad_lines_and_keeps_question():
+    hook, tips = rescue.rescue(HOOK, BAD_TIPS, ['분쟁이 50% 늘었대'], '\n\n📰 출처')
+    assert '50%' not in tips and '무조건' not in tips and tips.endswith('📰 출처')
+    assert '?' in tips.splitlines()[-3] and hook == HOOK
+    assert rescue.rescue('짧음', TIPS, [], '') is None
+
+
+def test_compose_rescues_when_every_rewrite_fails():
+    bad = FactCheck(claims=[ClaimCheck(sentence='분쟁이 50% 늘었대', kind='unsupported_fact', reason='숫자 다름')])
+    bad_post = ThreadPost(hook=HOOK, tips=BAD_TIPS)
+    draft, _ = run_compose({'SelectionResult': [selection((0, 8))], 'ThreadPost': [bad_post, bad_post],
+                            'FactCheck': [bad, bad]})
+    assert draft.rescued and draft.key == 'a1' and '50%' not in draft.parts[1]
+
+
+def test_rescued_post_is_marked_in_history():
+    bad = FactCheck(claims=[ClaimCheck(sentence='분쟁이 50% 늘었대', kind='unsupported_fact', reason='숫자 다름')])
+    bad_post = ThreadPost(hook=HOOK, tips=BAD_TIPS)
+    d, _ = deps(OK_ROUTES, {'SelectionResult': [selection((0, 8))], 'ThreadPost': [bad_post, bad_post],
+                            'FactCheck': [bad, bad]})
+    assert post.run_post(ENV, d, None, AT_20).outcome == 'success'
+    entry = history.find(history.load_history(), '2026-09-26T20:00')
+    assert entry.status == history.PUBLISHED and post.RESCUED_NOTE in entry.note
