@@ -62,6 +62,8 @@ def test_rank_candidates_orders_by_score_and_applies_threshold():
     assert [c.doc_id for c in ranked] == ['a2', 'a1'] and ranked[0].angle == '포인트'
     llm, _ = fake_llm({'SelectionResult': [selection((0, 3))]})
     assert selector.rank_candidates(llm, 'f', ARTICLES, (), '2026-09-27') == []
+    llm, _ = fake_llm({'SelectionResult': [selection((0, 3), (1, 5))]})  # 6점 넘는 기사가 없으면 4점 이상으로
+    assert [c.doc_id for c in selector.rank_candidates(llm, 'f', ARTICLES, (), '2026-09-27')] == ['a2']
 
 
 # --- 검수 규칙 ---

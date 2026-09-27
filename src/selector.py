@@ -12,6 +12,7 @@ from src.llm import LLMClient, load_prompt
 from src.models import Candidate, SelectionResult
 
 MIN_SCORE = 6
+FALLBACK_MIN_SCORE = 4  # 기준을 넘는 기사가 없을 때의 하한 (안전 때문에 1~3점으로 막은 기사는 제외)
 TITLE_SIMILARITY_THRESHOLD = 0.6
 MAX_CANDIDATES = 60   # 선별 LLM 입력 상한 (최신 기사부터)
 RECENT_TITLES = 20    # 최근에 쓴 주제 (중복 판단용)
@@ -52,9 +53,10 @@ def format_candidates(candidates: Sequence[Candidate]) -> str:
 
 def rank_candidates(
     llm: LLMClient, model: str, candidates: Sequence[Candidate], history: Sequence[HistoryEntry],
-    today: str, min_score: int = MIN_SCORE,
+    today: str, min_score: int = MIN_SCORE, fallback_min_score: int = FALLBACK_MIN_SCORE,
 ) -> list[Candidate]:
-    """min_score 이상인 후보를 점수 높은 순으로 반환합니다. 독자 포인트(angle)를 후보에 붙입니다."""
+    """min_score 이상인 후보를 점수 높은 순으로 반환합니다. 하나도 없으면 fallback_min_score 이상으로 낮춥니다.
+    회차를 건너뛰지 않기 위해서다. 독자 포인트(angle)를 후보에 붙입니다."""
     if not candidates:
         return []
     titles = [e.title for e in history if e.title][-RECENT_TITLES:]
@@ -63,6 +65,10 @@ def rank_candidates(
     result = llm.parse(model, load_prompt('selector'), user_input, SelectionResult)
     best: dict[int, tuple[int, Candidate]] = {}
     for s in result.scores:
-        if 0 <= s.index < len(candidates) and s.score >= min_score and s.index not in best:
+        if 0 <= s.index < len(candidates) and s.score >= fallback_min_score and s.index not in best:
             best[s.index] = (s.score, replace(candidates[s.index], angle=s.angle.strip()))
-    return [c for _, c in sorted(best.values(), key=lambda pair: pair[0], reverse=True)]
+    ordered = sorted(best.values(), key=lambda pair: pair[0], reverse=True)
+    passed = [c for score, c in ordered if score >= min_score]
+    if not passed and ordered:
+        print(f'[선별] {min_score}점 넘는 기사가 없어 {fallback_min_score}점 이상으로 낮춥니다.')
+    return passed or [c for _, c in ordered]
