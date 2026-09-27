@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from src import channel, patterns, quality, rescue, selector
+from src import casual, channel, patterns, quality, rescue, schedule, selector
 from src.history import HistoryEntry
 from src.llm import LLMClient, load_prompt
 from src.models import Candidate, ThreadPost
@@ -179,8 +179,13 @@ def compose(
     today: str,
     slot_hour: int | None = None,
     load_products: Callable[[], list[Product]] = lambda: [],
+    slot: str = '',
 ) -> Draft:
-    """제품 슬롯이면 제품 추천을 먼저 시도하고, 올릴 제품이 없거나 실패하면 뉴스 글로 대신합니다."""
+    """일상글 슬롯이면 일상글, 제품 슬롯이면 제품 추천(실패하면 뉴스), 그 밖엔 뉴스 글."""
+    if slot and slot_hour == channel.CASUAL_HOUR:
+        text, canned = casual.compose_casual(llm, models.writer, history, schedule.slot_datetime(slot), slot,
+                                             channel.CASUAL_FALLBACKS)
+        return Draft(f'{casual.KIND}:{slot}', text.splitlines()[0][:40], (text,), '', casual.KIND, rescued=canned)
     if channel.PRODUCT_HOUR is not None and slot_hour == channel.PRODUCT_HOUR:
         product = next_product(load_products(), history)
         if product is None:

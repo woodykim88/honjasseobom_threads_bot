@@ -3,6 +3,7 @@ name: threads
 on:
   schedule:
     # 정시 실행은 Cloudflare 정시 알람(인스타피드 건강뉴스 자동화/scheduler)이 맡고, GitHub cron은 예비로만 둔다 (UTC)
+    - cron: '52 3 * * *'   # post 예비(일상글 12:30 슬롯)
     - cron: '22 23,11 * * *'   # post 예비: KST 08:22, 20:22
     - cron: '29 0 * * 1'       # refresh-token: 매주 월 KST 09:29
   workflow_dispatch:
@@ -42,6 +43,7 @@ jobs:
         run: |
           case "$CRON" in
             '22 23,11 * * *') JOB=post ;;
+            '52 3 * * *') JOB=post ;;
             '29 0 * * 1') JOB=refresh-token ;;
             *) JOB="${INPUT_JOB:-preview}" ;;
           esac

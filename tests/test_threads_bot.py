@@ -347,3 +347,28 @@ def test_rescued_post_is_marked_in_history():
     assert post.run_post(ENV, d, None, AT_20).outcome == 'success'
     entry = history.find(history.load_history(), '2026-09-26T20:00')
     assert entry.status == history.PUBLISHED and post.RESCUED_NOTE in entry.note
+
+
+# --- 일상글 (channel.CASUAL_HOUR 슬롯) ---
+
+from src import casual  # noqa: E402
+from src.casual import CasualPost  # noqa: E402
+
+
+def test_casual_slot_writes_short_post_without_links(monkeypatch):
+    monkeypatch.setattr(channel, 'CASUAL_HOUR', 12)
+    llm, client = fake_llm({'CasualPost': [CasualPost(text='라면에 계란 vs 치즈, 너는 뭐 넣어? 🍜')]})
+    draft = compose.compose(llm, MODELS, (), lambda: [], lambda a: None, '2026-09-27', 12, lambda: [],
+                            '2026-09-27T12:30')
+    assert draft.kind == casual.KIND and draft.parts == ('라면에 계란 vs 치즈, 너는 뭐 넣어? 🍜',)
+    assert draft.key == 'casual:2026-09-27T12:30' and not draft.rescued and len(client.requests) == 1
+
+
+def test_casual_falls_back_to_prepared_question(monkeypatch):
+    monkeypatch.setattr(channel, 'CASUAL_HOUR', 12)
+    bad = CasualPost(text='어제 내가 써봤는데 무조건 좋아 https://x.com')
+    llm, _ = fake_llm({'CasualPost': [bad, bad]})
+    draft = compose.compose(llm, MODELS, (), lambda: [], lambda a: None, '2026-09-27', 12, lambda: [],
+                            '2026-09-27T12:30')
+    assert draft.rescued and draft.parts[0] in channel.CASUAL_FALLBACKS
+    assert all('?' in q and not quality.rule_issues(q) for q in channel.CASUAL_FALLBACKS)
