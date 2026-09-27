@@ -1,0 +1,41 @@
+"""채널별 설정. 두 Threads 뉴스 채널(혼자써봄·건강노트)은 이 파일과 prompts/만 다르고 나머지 코드는 같다."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Feed:
+    publisher: str
+    url: str
+
+
+NAME = '혼자써봄'
+HANDLE = 'honjasseobom'
+TOPIC = '생활필수품 뉴스'
+CMD_PREFIX = 'hj'  # 텔레그램 명령: /hj_stop /hj_skip /hj_resume (다른 Threads 채널과 겹치지 않게)
+
+# 언론사가 직접 배포하는 공식 RSS만 쓴다 (모두 robots.txt가 /rss/ 수집을 허용, 2026-09-27 확인).
+# 소비자가만드는신문은 robots.txt가 /rss/를 막아서 뺐다.
+FEEDS = (
+    Feed('컨슈머치', 'https://www.consumuch.com/rss/allArticle.xml'),
+    Feed('소비자경제', 'https://www.dailycnc.com/rss/allArticle.xml'),
+    Feed('컨슈머타임스', 'https://www.cstimes.com/rss/S1N3.xml'),
+    Feed('식품음료신문', 'https://www.foodnews.co.kr/rss/S1N1.xml'),
+)
+
+# 생활필수품과 거리가 먼 기사 (선별 LLM 전에 걸러 비용 절약). 제목에서 찾는다.
+EXCLUDED_TITLE_WORDS = (
+    '[포토]', '[인사]', '[부고]', '[칼럼]', '[사설]', 'MOU', '업무협약', '협약 체결', '임명', '취임', '선임',
+    '대학교', '대학', '게임', '주가', '투자', '실적', '영업이익', '공모', '봉사', '기부', '후원', '수상', '시상',
+    '선물거래', '코인', '가상자산', '정치', '국회의원', '선거',
+)
+# 자동 게시에서 빼는 주제: 의료 분쟁·사건사고처럼 정보보다 사고 소식인 기사
+SENSITIVE_PATTERNS = (
+    r'사망', r'숨져', r'숨진', r'성폭', r'마약', r'자살', r'시술', r'수술', r'임플란트', r'분만', r'치료받',
+)
+
+# 과장·단정 표현 (본문 전체 검사)
+BANNED_WORDS = (
+    '무조건', '100%', '최저가', '역대급', '미쳤다', '효과 보장', '완치', '해독', '디톡스', '충격', '경악',
+)
