@@ -4,9 +4,11 @@
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from src import channel, compose, guard, history, notifier, schedule, state
@@ -128,3 +130,47 @@ def run_post(env: Mapping[str, str], deps: PostDeps, telegram: notifier.Telegram
     if errors:
         return RunResult('failed', ' / '.join(errors), tuple(posts), calls)
     return RunResult('success', f'{len(posts)}건 게시', tuple(posts), calls)
+
+
+# --- 미리 보여 준 글 그대로 게시 (수동 테스트·사람 확인 후 게시용) ---
+
+PENDING_PATH = Path(__file__).resolve().parent.parent / 'data' / 'pending.json'
+
+
+def save_pending(draft: compose.Draft, slot: str, path: Path | None = None) -> None:
+    path = path or PENDING_PATH
+    row = {'slot': slot, 'key': draft.key, 'title': draft.title, 'kind': draft.kind,
+           'parts': list(draft.parts), 'source_url': draft.source_url}
+    path.write_text(json.dumps(row, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
+def run_pending(client: ThreadsClient, telegram: notifier.TelegramConfig | None, now: datetime,
+                path: Path | None = None) -> RunResult:
+    """data/pending.json의 글을 그대로 올리고 기록한 뒤 파일을 지웁니다. 같은 슬롯은 두 번 올리지 않습니다."""
+    path = path or PENDING_PATH
+    if not path.exists():
+        return RunResult('skipped', '올릴 글(data/pending.json)이 없습니다.')
+    row = json.loads(path.read_text(encoding='utf-8'))
+    past = history.load_history()
+    if row['slot'] in done_slots(past):
+        path.unlink()
+        return RunResult('skipped', f'{row["slot"]}은 이미 올렸습니다.')
+    parts = tuple(row['parts'])
+    container = client.create_text(parts[0])
+    entry = history.HistoryEntry(slot=row['slot'], status=PUBLISHING, title=row['title'], seed=row['kind'],
+                                 doc_id=row['key'], source_url=row['source_url'],
+                                 caption='\n\n— — —\n\n'.join(parts), note='미리 보여 준 글', updated_at=_stamp(now))
+    history.save_history(history.upsert(past, entry))
+    client.wait_before_publish()
+    media_id = client.publish(container)
+    done = history.with_status(entry, history.PUBLISHED, media_id=media_id)
+    history.save_history(history.upsert(history.load_history(), done))
+    note = publish_replies(client, media_id, parts[1:])
+    try:
+        done = history.with_status(done, history.PUBLISHED, permalink=client.permalink(media_id), note=note or entry.note)
+    except ThreadsError as e:
+        print(f'[주소 조회 실패] 게시는 완료됨: {e}')
+    history.save_history(history.upsert(history.load_history(), done))
+    path.unlink()
+    notifier.notify(telegram, f'✅ 게시: {done.title}\n{done.permalink or "(주소 조회 실패)"}')
+    return RunResult('success', f'1건 게시: {done.permalink}', (PostRecord(done.title, done.status, done.slot, done.permalink),))

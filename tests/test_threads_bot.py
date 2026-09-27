@@ -299,3 +299,19 @@ def test_cross_promo_every_third_news_post(monkeypatch):
     draft, _ = run_compose({'SelectionResult': [selection((0, 8))], 'ThreadPost': [POST], 'FactCheck': [OK_FACTS]},
                            history_=news(2))
     assert draft.parts[1].endswith('📸 인스타 @x')
+
+
+def test_post_pending_publishes_saved_draft_once(tmp_path):
+    path = tmp_path / 'pending.json'
+    draft = compose.Draft('a1', '제목', (HOOK, TIPS), 'https://news.example/a1')
+    post.save_pending(draft, '2026-09-27T13:40', path)
+    c, graph = client(OK_ROUTES)
+    r = post.run_pending(c, None, AT_20, path)
+    assert r.outcome == 'success' and not path.exists()
+    entry = history.find(history.load_history(), '2026-09-27T13:40')
+    assert entry.status == history.PUBLISHED and entry.doc_id == 'a1' and entry.permalink == 'https://threads/p/1'
+    creates = [p for m, u, p in graph.calls if u.endswith('/threads')]
+    assert [p['text'] for p in creates] == [HOOK, TIPS] and creates[1]['reply_to_id'] == 'm1'
+    post.save_pending(draft, '2026-09-27T13:40', path)
+    assert post.run_pending(c, None, AT_20, path).outcome == 'skipped'  # 같은 슬롯 두 번 안 올림
+    assert post.run_pending(c, None, AT_20, path).outcome == 'skipped'  # 파일 없음

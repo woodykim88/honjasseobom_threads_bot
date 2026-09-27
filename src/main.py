@@ -4,6 +4,7 @@
     post           슬롯 시각이 되면 기사로 글을 만들어 바로 게시
     preview        게시하지 않고 글만 만들어 output/preview.txt에 저장
     refresh-token  Threads 장기 토큰 갱신 (주 1회)
+    post-pending   미리 보여 준 글(data/pending.json)을 그대로 게시 (--save-pending으로 만든 것)
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from src.llm import LLMClient, LLMError
 from src.threads import ThreadsClient, ThreadsConfigError, ThreadsError, load_threads_config
 
 ROOT = Path(__file__).resolve().parent.parent
-JOBS = ('post', 'preview', 'refresh-token')
+JOBS = ('post', 'preview', 'refresh-token', 'post-pending')
 PREVIEW_PATH = ROOT / 'output' / 'preview.txt'
 KNOWN_ERRORS = (providers.ProviderConfigError, ThreadsConfigError, ThreadsError, schedule.ScheduleError,
                 compose.PipelineError, LLMError)
@@ -42,23 +43,28 @@ def load_products():
     return products.fetch_products(http_get)
 
 
-def run_preview(env: Mapping[str, str], ai: providers.AISettings, hour: int | None) -> RunResult:
+def run_preview(env: Mapping[str, str], ai: providers.AISettings, hour: int | None, pending_slot: str = '') -> RunResult:
     llm = LLMClient(providers.build_text_backend(ai.text_provider, env))
     today = datetime.now(schedule.KST).strftime('%Y-%m-%d')
     draft = compose.compose(llm, compose.Models(ai.writer_model, ai.fast_model), history.load_history(),
                             load_candidates, fetch_body, today, hour, load_products)
     PREVIEW_PATH.parent.mkdir(parents=True, exist_ok=True)
     PREVIEW_PATH.write_text(draft.text, encoding='utf-8')
+    if pending_slot:
+        post.save_pending(draft, pending_slot)
+        print(f'[저장] data/pending.json ({pending_slot}) → post-pending 작업이 이 글을 그대로 올립니다.')
     print(f'[미리보기] ({draft.kind}) ' + ' + '.join(f'{len(p)}자' for p in draft.parts) + f'\n{draft.text}')
     return RunResult('success', f'미리보기 생성: {draft.title}', llm_calls=llm.calls)
 
 
 def run_job(job: str, env: Mapping[str, str], ai: providers.AISettings | None,
-            telegram: notifier.TelegramConfig | None, hour: int | None = None) -> RunResult:
+            telegram: notifier.TelegramConfig | None, hour: int | None = None, pending_slot: str = '') -> RunResult:
     if job == 'preview':
-        return run_preview(env, ai, hour)
+        return run_preview(env, ai, hour, pending_slot)
     if job == 'refresh-token':
         return token_refresh.run_refresh(env, telegram)
+    if job == 'post-pending':
+        return post.run_pending(ThreadsClient(load_threads_config(env)), telegram, datetime.now(timezone.utc))
     deps = post.PostDeps(
         backend=providers.build_text_backend(ai.text_provider, env),
         models=compose.Models(ai.writer_model, ai.fast_model),
@@ -71,6 +77,7 @@ def run_job(job: str, env: Mapping[str, str], ai: providers.AISettings | None,
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=f'Threads @{channel.HANDLE} 자동 게시')
     parser.add_argument('--job', choices=JOBS, default='preview')
+    parser.add_argument('--save-pending', default='', help='preview: 이 슬롯 키(예: 2026-09-27T13:40)로 data/pending.json에 저장')
     parser.add_argument('--hour', type=int, default=None, help='preview: 제품 슬롯 시각(예: 20)이면 제품 추천 글')
     args = parser.parse_args(argv)
 
@@ -82,7 +89,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.job in ('post', 'preview'):
             ai = providers.load_ai_settings(env)
-        result = run_job(args.job, env, ai, telegram, args.hour)
+        result = run_job(args.job, env, ai, telegram, args.hour, args.save_pending)
     except KNOWN_ERRORS as e:
         result = RunResult('failed', str(e))
     except Exception as e:  # noqa: BLE001 - 무인 실행이므로 예상 못한 오류도 로그를 남기고 반드시 알린다
