@@ -23,6 +23,7 @@ from src.guard import RunResult
 from src.http_client import http_get
 from src.llm import LLMClient, LLMError
 from src.threads import ThreadsClient, ThreadsConfigError, ThreadsError, load_threads_config
+from src import usage
 
 ROOT = Path(__file__).resolve().parent.parent
 JOBS = ('post', 'preview', 'refresh-token', 'post-pending')
@@ -101,6 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         notifier.notify(telegram, f'❌ {args.job} 작업 실패\n원인: {result.message}')
     if env.get('GITHUB_ACTIONS') == 'true':
         runlog.append_run(runlog.RunRecord(
+            usage=usage.snapshot(),
             started_at=started.isoformat(timespec='seconds'),
             finished_at=datetime.now(schedule.KST).isoformat(timespec='seconds'),
             mode=args.job, outcome=result.outcome, message=result.message,

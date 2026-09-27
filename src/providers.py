@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel
+from src import usage
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -64,6 +65,7 @@ class OpenAITextBackend:
         response = self._client.responses.parse(
             model=model, instructions=instructions, input=user_input, text_format=schema
         )
+        usage.record(model, response)
         return response.output_parsed
 
 
@@ -79,6 +81,7 @@ class AnthropicTextBackend:
             messages=[{'role': 'user', 'content': user_input}],
             output_format=schema,
         )
+        usage.record(model, response)
         return response.parsed_output
 
 
