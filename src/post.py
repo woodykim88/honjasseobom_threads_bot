@@ -12,6 +12,7 @@ from typing import Any
 from src import channel, compose, guard, history, notifier, schedule, state
 from src.guard import RunResult
 from src.models import Candidate
+from src.products import Product
 from src.llm import LLMClient, LLMError
 from src.providers import TextBackend
 from src.runlog import PostRecord
@@ -27,6 +28,7 @@ class PostDeps:
     client: ThreadsClient
     load_candidates: Callable[[], list[Candidate]]
     fetch_body: Callable[[Candidate], str | None]
+    load_products: Callable[[], list[Product]] = lambda: []
     tg_get: Callable[..., Any] | None = None
 
 
@@ -53,9 +55,10 @@ def publish_replies(client: ThreadsClient, parent_id: str, replies: tuple[str, .
 
 def post_slot(key: str, deps: PostDeps, llm: LLMClient, past: tuple[history.HistoryEntry, ...],
               now: datetime) -> history.HistoryEntry:
-    draft = compose.compose(llm, deps.models, past, deps.load_candidates, deps.fetch_body, key[:10])
+    draft = compose.compose(llm, deps.models, past, deps.load_candidates, deps.fetch_body, key[:10],
+                            schedule.slot_datetime(key).hour, deps.load_products)
     container = deps.client.create_text(draft.parts[0])
-    entry = history.HistoryEntry(slot=key, status=PUBLISHING, title=draft.title, seed='news',
+    entry = history.HistoryEntry(slot=key, status=PUBLISHING, title=draft.title, seed=draft.kind,
                                  doc_id=draft.key, source_url=draft.source_url, caption=draft.text,
                                  updated_at=_stamp(now))
     history.save_history(history.upsert(past, entry))
@@ -99,7 +102,8 @@ def run_post(env: Mapping[str, str], deps: PostDeps, telegram: notifier.Telegram
             done = post_slot(key, deps, llm, past, now)
             past = history.load_history()
             posts.append(PostRecord(done.title, done.status, key, done.permalink))
-            notifier.notify(telegram, f'✅ 게시: {done.title}\n{done.permalink or "(주소 조회 실패)"}')
+            kind = '제품 추천' if done.seed == compose.PRODUCT else '뉴스'
+            notifier.notify(telegram, f'✅ {kind} 게시: {done.title}\n{done.permalink or "(주소 조회 실패)"}')
         except (compose.PipelineError, LLMError) as e:
             errors.append(f'{key}: {e}')
             past = history.upsert(past, history.HistoryEntry(key, history.FAILED, note=str(e)[:300], updated_at=_stamp(now)))

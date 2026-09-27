@@ -39,3 +39,11 @@ SENSITIVE_PATTERNS = (
 BANNED_WORDS = (
     '무조건', '100%', '최저가', '역대급', '미쳤다', '효과 보장', '완치', '해독', '디톡스', '충격', '경악',
 )
+
+# 수익화 (2026-09-27 사용자 결정): 20:00은 인포크 제휴 제품 추천, 나머지는 뉴스. 모든 제품을 한 번씩 올리면 뉴스로.
+# @damz0324도 같은 인포크 목록을 앞에서부터 쓰므로, 같은 날 같은 제품이 겹치지 않게 여기선 뒤에서부터 고른다.
+PRODUCT_HOUR: int | None = 20
+PRODUCT_FROM_END = True
+# 교차 추천: 뉴스 글 3개에 1번, 답글 출처 아래에 붙인다 (첫 글에 링크를 달면 노출이 줄어드는 경향이 있어 답글에만)
+CROSS_PROMO = '📸 생활경제 소식은 카드로도 정리 중: 인스타 @newsmanwoody\nhttps://www.instagram.com/newsmanwoody/'
+CROSS_PROMO_EVERY = 3

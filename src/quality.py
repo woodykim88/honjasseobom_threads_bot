@@ -8,7 +8,7 @@ from src.llm import LLMClient, load_prompt
 from src.models import FactCheck
 from src.threads import MAX_TEXT_CHARS
 
-LIMITS = {'hook': 200, 'tips': 470}  # 첫 글은 100자 안팎으로 짧게 (노하우: 긴 글은 광고처럼 보임)
+LIMITS = {'hook': 200, 'tips': 470, 'pitch': 220}  # 첫 글은 100자 안팎으로 짧게 (노하우: 긴 글은 광고처럼 보임)
 # "진짜 써 본 것처럼" 보이는 1인칭 사용 후기 표현 (추천·큐레이션 톤만 허용)
 FIRST_PERSON_PATTERNS = (
     r'(먹어|써|사용해|입어|신어|마셔|발라|해)\s?(봤|보니|봤는데|봤더니)', r'내가\s?(먹|써|샀|사용|입|신|마셔)',

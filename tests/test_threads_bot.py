@@ -245,3 +245,57 @@ def test_refresh_token_api():
     graph = Graph({'refresh_access_token': Resp(200, {'access_token': 'n', 'expires_in': 100})})
     assert threads.refresh_token('o', request=graph) == ('n', 100)
     assert graph.calls[0][2]['grant_type'] == 'th_refresh_token'
+
+
+# --- 제휴 제품 추천·교차 추천 (channel 설정으로 켜고 끔) ---
+
+from src import products as products_mod  # noqa: E402
+
+PRODUCTS = [products_mod.Product('오징어 짬뽕', 'https://link.coupang.com/a/1'),
+            products_mod.Product('백색소음기', 'https://link.inpock.co.kr/x')]
+PRODUCT_POST = ThreadPost(hook=HOOK, tips=TIPS, pitch='잠귀 밝은 사람한테 백색소음기 딱이야\n너는 잠귀 밝은 편이야?')
+
+
+@pytest.fixture
+def product_channel(monkeypatch):
+    from src.llm import PROMPTS_DIR
+    if not (PROMPTS_DIR / 'product.md').exists():
+        pytest.skip('이 채널은 제품 추천 프롬프트가 없음 (제품 추천을 쓰지 않는 채널)')
+    monkeypatch.setattr(channel, 'PRODUCT_HOUR', 20)
+    monkeypatch.setattr(channel, 'PRODUCT_FROM_END', True)
+
+
+def test_product_slot_picks_from_end_with_disclosure(product_channel):
+    llm, client = fake_llm({'ThreadPost': [PRODUCT_POST]})
+    draft = compose.compose(llm, MODELS, (), lambda: list(ARTICLES), lambda a: BODY, '2026-09-27', 20,
+                            lambda: list(PRODUCTS))
+    assert draft.kind == compose.PRODUCT and draft.key == PRODUCTS[1].url and len(draft.parts) == 3
+    assert draft.parts[2].endswith(compose.AFFILIATE_DISCLOSURE) and '👉 백색소음기' in draft.parts[2]
+    assert 'https://' not in draft.parts[0] + draft.parts[1] and len(client.requests) == 1
+
+
+def test_product_slot_falls_back_to_news_when_all_used(product_channel):
+    used = tuple(history.HistoryEntry(f's{i}', history.PUBLISHED, doc_id=p.url, seed='product')
+                 for i, p in enumerate(PRODUCTS))
+    llm, _ = fake_llm({'SelectionResult': [selection((0, 8))], 'ThreadPost': [POST], 'FactCheck': [OK_FACTS]})
+    draft = compose.compose(llm, MODELS, used, lambda: list(ARTICLES), lambda a: BODY, '2026-09-27', 20,
+                            lambda: list(PRODUCTS))
+    assert draft.kind == compose.NEWS
+
+
+def test_no_product_when_channel_disables_it(monkeypatch):
+    monkeypatch.setattr(channel, 'PRODUCT_HOUR', None)
+    llm, _ = fake_llm({'SelectionResult': [selection((0, 8))], 'ThreadPost': [POST], 'FactCheck': [OK_FACTS]})
+    draft = compose.compose(llm, MODELS, (), lambda: list(ARTICLES), lambda a: BODY, '2026-09-27', 20,
+                            lambda: list(PRODUCTS))
+    assert draft.kind == compose.NEWS
+
+
+def test_cross_promo_every_third_news_post(monkeypatch):
+    monkeypatch.setattr(channel, 'CROSS_PROMO', '📸 인스타 @x')
+    monkeypatch.setattr(channel, 'CROSS_PROMO_EVERY', 3)
+    news = lambda n: tuple(history.HistoryEntry(f's{i}', history.PUBLISHED, seed='news') for i in range(n))
+    assert [compose.wants_cross_promo(news(n)) for n in range(6)] == [False, False, True, False, False, True]
+    draft, _ = run_compose({'SelectionResult': [selection((0, 8))], 'ThreadPost': [POST], 'FactCheck': [OK_FACTS]},
+                           history_=news(2))
+    assert draft.parts[1].endswith('📸 인스타 @x')

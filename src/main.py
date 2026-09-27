@@ -17,7 +17,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src import channel, collector, compose, history, notifier, post, providers, runlog, schedule, token_refresh
+from src import channel, collector, compose, history, notifier, post, products, providers, runlog, schedule, token_refresh
 from src.guard import RunResult
 from src.http_client import http_get
 from src.llm import LLMClient, LLMError
@@ -38,28 +38,32 @@ def fetch_body(article):
     return collector.fetch_body(http_get, article)
 
 
-def run_preview(env: Mapping[str, str], ai: providers.AISettings) -> RunResult:
+def load_products():
+    return products.fetch_products(http_get)
+
+
+def run_preview(env: Mapping[str, str], ai: providers.AISettings, hour: int | None) -> RunResult:
     llm = LLMClient(providers.build_text_backend(ai.text_provider, env))
     today = datetime.now(schedule.KST).strftime('%Y-%m-%d')
     draft = compose.compose(llm, compose.Models(ai.writer_model, ai.fast_model), history.load_history(),
-                            load_candidates, fetch_body, today)
+                            load_candidates, fetch_body, today, hour, load_products)
     PREVIEW_PATH.parent.mkdir(parents=True, exist_ok=True)
     PREVIEW_PATH.write_text(draft.text, encoding='utf-8')
-    print(f'[미리보기] ' + ' + '.join(f'{len(p)}자' for p in draft.parts) + f'\n{draft.text}')
+    print(f'[미리보기] ({draft.kind}) ' + ' + '.join(f'{len(p)}자' for p in draft.parts) + f'\n{draft.text}')
     return RunResult('success', f'미리보기 생성: {draft.title}', llm_calls=llm.calls)
 
 
 def run_job(job: str, env: Mapping[str, str], ai: providers.AISettings | None,
-            telegram: notifier.TelegramConfig | None) -> RunResult:
+            telegram: notifier.TelegramConfig | None, hour: int | None = None) -> RunResult:
     if job == 'preview':
-        return run_preview(env, ai)
+        return run_preview(env, ai, hour)
     if job == 'refresh-token':
         return token_refresh.run_refresh(env, telegram)
     deps = post.PostDeps(
         backend=providers.build_text_backend(ai.text_provider, env),
         models=compose.Models(ai.writer_model, ai.fast_model),
         client=ThreadsClient(load_threads_config(env)),
-        load_candidates=load_candidates, fetch_body=fetch_body,
+        load_candidates=load_candidates, fetch_body=fetch_body, load_products=load_products,
     )
     return post.run_post(env, deps, telegram, datetime.now(timezone.utc))
 
@@ -67,6 +71,7 @@ def run_job(job: str, env: Mapping[str, str], ai: providers.AISettings | None,
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=f'Threads @{channel.HANDLE} 자동 게시')
     parser.add_argument('--job', choices=JOBS, default='preview')
+    parser.add_argument('--hour', type=int, default=None, help='preview: 제품 슬롯 시각(예: 20)이면 제품 추천 글')
     args = parser.parse_args(argv)
 
     load_dotenv(ROOT / '.env')
@@ -77,7 +82,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.job in ('post', 'preview'):
             ai = providers.load_ai_settings(env)
-        result = run_job(args.job, env, ai, telegram)
+        result = run_job(args.job, env, ai, telegram, args.hour)
     except KNOWN_ERRORS as e:
         result = RunResult('failed', str(e))
     except Exception as e:  # noqa: BLE001 - 무인 실행이므로 예상 못한 오류도 로그를 남기고 반드시 알린다

@@ -32,10 +32,11 @@ class SelectionResult(BaseModel):
 
 
 class ThreadPost(BaseModel):
-    """스레드 이어쓰기: 첫 글(후킹 + 핵심 소식) → 답글(자세히 정리). 출처 줄은 코드가 붙인다."""
+    """스레드 이어쓰기: 첫 글(후킹) → 답글(자세히 정리) → (제품이면) 답글(추천). 출처·링크·고지는 코드가 붙인다."""
 
     hook: str = Field(description='첫 글: 궁금하게 만드는 도입 + 핵심 사실 하나, 150~300자')
     tips: str = Field(description='답글: 기사 내용을 번호 매겨 3~5개로 정리 + 마무리 한마디, 250~450자')
+    pitch: str = Field(default='', description='제품 글만: 두 번째 답글의 추천 1~2줄 + 질문, 최대 200자 (뉴스 글은 빈 문자열)')
 
 
 ClaimKind = Literal['supported_fact', 'unsupported_fact', 'general_advice']

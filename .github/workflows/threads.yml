@@ -12,6 +12,10 @@ on:
         type: choice
         options: [preview, post, refresh-token]
         default: preview
+      hour:
+        description: 'preview 전용: 제품 슬롯 시각(혼자써봄은 20)을 넣으면 제품 추천 글, 비우면 뉴스 글'
+        type: string
+        default: ''
 
 concurrency:
   group: threads
@@ -75,7 +79,8 @@ jobs:
           TEXT_PROVIDER: ${{ vars.TEXT_PROVIDER }}
           WRITER_MODEL: ${{ vars.WRITER_MODEL }}
           FAST_MODEL: ${{ vars.FAST_MODEL }}
-        run: python -m src.main --job ${{ steps.pick.outputs.job }}
+          HOUR: ${{ inputs.hour }}
+        run: python -m src.main --job ${{ steps.pick.outputs.job }} ${HOUR:+--hour "$HOUR"}
 
       - name: Upload preview
         if: always() && steps.pick.outputs.job == 'preview'
