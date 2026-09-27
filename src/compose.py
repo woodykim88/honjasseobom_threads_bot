@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from src import quality, selector
+from src import patterns, quality, selector
 from src.history import HistoryEntry
 from src.llm import LLMClient, load_prompt
 from src.models import Candidate, ThreadPost
@@ -45,13 +45,14 @@ def source_tail(article: Candidate) -> str:
 
 def check_post(post: ThreadPost, tail: str) -> list[str]:
     issues = quality.part_issues('hook', post.hook) + quality.part_issues('tips', post.tips, tail)
+    issues += quality.ending_issues(post.tips)
     return issues + quality.rule_issues(f'{post.hook}\n{post.tips}')
 
 
 def write_checked(llm: LLMClient, models: Models, article: Candidate, body: str) -> tuple[str, ...] | None:
     tail = source_tail(article)
     user_input = (f'매체: {article.publisher}\n기사 제목: {article.title}\n독자 포인트: {article.angle}\n'
-                  f'--- 기사 본문 ---\n{body}')
+                  f'{patterns.pattern_brief(article.doc_id)}\n--- 기사 본문 ---\n{body}')
     feedback: tuple[str, ...] = ()
     for attempt in range(1, MAX_WRITE_ATTEMPTS + 1):
         extra = ('\n\n이전 글이 자동 검수에서 탈락했어. 아래를 고쳐서 다시 써:\n' + '\n'.join(f'- {f}' for f in feedback)) if feedback else ''

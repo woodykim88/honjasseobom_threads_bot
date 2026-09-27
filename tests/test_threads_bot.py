@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 
 from scripts import due_check
-from src import channel, collector, commands, compose, history, notifier, post, quality, schedule, selector, state, threads, token_refresh
+from src import patterns, channel, collector, commands, compose, history, notifier, post, quality, schedule, selector, state, threads, token_refresh
 from src.models import ClaimCheck, FactCheck, ThreadPost
 from src.threads import ThreadsClient, ThreadsConfig, ThreadsError
 from tests.helpers import AT_20, ARTICLES, BODY, GOOD_BODY, HOOK, TIPS, Resp, fake_llm, selection
@@ -73,8 +73,15 @@ def test_rule_issues_blocks_first_person_hype_links_and_length():
     assert any('1인칭' in i for i in quality.rule_issues('어제 써봤는데 괜찮았어'))
     assert any('과장' in i for i in quality.rule_issues('무조건 확인해'))
     assert any('링크' in i for i in quality.rule_issues('여기 https://x.com'))
-    assert any('320자' in i for i in quality.part_issues('hook', '가' * 321))
+    assert any('200자' in i for i in quality.part_issues('hook', '가' * 201))
     assert any('500자' in i for i in quality.part_issues('tips', '가' * 400, '나' * 150))
+    assert quality.ending_issues(TIPS) == [] and quality.ending_issues('1. 정리\n저장해 둬')
+
+
+def test_patterns_pick_two_plus_question_and_no_fake_personas():
+    picked = patterns.pick_patterns('a1')
+    assert len(picked) == 3 and picked[-1] == patterns.ALWAYS and picked == patterns.pick_patterns('a1')
+    assert not any(w in p for p in patterns.PATTERNS for w in ('따라 샀', '스친', '얼떨결'))
 
 
 # --- 글 만들기 ---
