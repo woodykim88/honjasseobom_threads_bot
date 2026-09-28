@@ -372,3 +372,12 @@ def test_casual_falls_back_to_prepared_question(monkeypatch):
                             '2026-09-27T12:30')
     assert draft.rescued and draft.parts[0] in channel.CASUAL_FALLBACKS
     assert all('?' in q and not quality.rule_issues(q) for q in channel.CASUAL_FALLBACKS)
+
+
+def test_flagged_line_is_dropped_without_rewriting():
+    """걸린 줄(근거 없는 사실·금지 표현)은 다시 쓰지 않고 빼고 게시한다 (2026-09-28)."""
+    bad = FactCheck(claims=[ClaimCheck(sentence='분쟁이 50% 늘었대', kind='unsupported_fact', reason='숫자 다름')])
+    draft, client = run_compose({'SelectionResult': [selection((0, 8))], 'ThreadPost': [ThreadPost(hook=HOOK, tips=BAD_TIPS)],
+                                 'FactCheck': [bad]})
+    writes = [r for r in client.requests if r['text_format'].__name__ == 'ThreadPost']
+    assert len(writes) == 1 and draft.rescued and '50%' not in draft.parts[1] and '무조건' not in draft.parts[1]

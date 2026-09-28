@@ -92,9 +92,33 @@ class Attempt:
     bad_sentences: tuple[str, ...]
 
 
+def drop_lines(post: ThreadPost, tail: str, bad: Sequence[str]) -> tuple[str, ...] | None:
+    """걸린 줄(근거 없는 사실·금지 표현·링크)만 빼고 길이를 맞춥니다 (2026-09-28: 원고를 다시 쓰지 않는다).
+
+    걸린 문장이 그대로 남았거나, 규칙 문제·질문 마무리 문제가 남으면 None (그때만 다시 쓴다).
+    """
+    parts = rescue.rescue(post.hook, post.tips, bad, tail)
+    if parts is None:
+        return None
+    tips = parts[1][:len(parts[1]) - len(tail)]
+    body = f'{parts[0]}\n{tips}'
+    if quality.ending_issues(tips) or quality.rule_issues(body) or _unmatched('\n'.join((post.hook, post.tips)), bad):
+        return None
+    return parts
+
+
+def _unmatched(original: str, bad: Sequence[str]) -> bool:
+    """걸린 문장 중 원고의 어느 줄과도 맞춰지지 않은 게 있으면 True (말을 바꿔 인용해 뺄 줄을 못 찾은 경우)."""
+    lines = [rescue._normalize(ln) for ln in original.splitlines() if ln.strip()]  # noqa: SLF001 - 같은 기준
+    def found(sentence: str) -> bool:
+        s = rescue._normalize(sentence)  # noqa: SLF001
+        return any(s in ln or (len(ln) >= rescue.MIN_MATCH_CHARS and ln in s) for ln in lines)
+    return not all(found(b) for b in bad)
+
+
 def write_checked(llm: LLMClient, models: Models, prompt: str, user_input: str, tail: str, kind: str,
                   source: str | None, article: Candidate | None = None) -> tuple[tuple[str, ...] | None, Attempt | None]:
-    """(통과한 글, None) 또는 (None, 가장 나은 탈락 원고)를 반환합니다.
+    """(통과한 글, None), (걸린 줄을 뺀 글, 걸린 원고) 또는 (None, 가장 나은 탈락 원고)를 반환합니다.
 
     source가 있으면(뉴스) 원문 대조 사실 검증까지 합니다. 제품 글은 제품명 밖의 사실을 규칙으로 막는다.
     """
@@ -111,6 +135,10 @@ def write_checked(llm: LLMClient, models: Models, prompt: str, user_input: str, 
         if not issues:
             print(f'[검수 통과] 시도 {attempt}')
             return assemble(post, tail, kind), None
+        fixed = drop_lines(post, tail, bad) if kind == NEWS else None
+        if fixed is not None:
+            print(f'[문장 빼기] 시도 {attempt}: 걸린 줄만 빼고 게시합니다 (다시 쓰지 않음): ' + ' / '.join(issues))
+            return fixed, Attempt(article, post, tail, tuple(issues), tuple(bad))
         print(f'[검수 탈락] 시도 {attempt}: ' + ' / '.join(issues))
         feedback = tuple(issues)
         if article is not None and (best is None or len(issues) <= len(best.issues)):
@@ -161,7 +189,7 @@ def compose_news(
         parts, failed = write_checked(llm, models, 'writer', user_input, source_tail(article, promo), NEWS,
                                       source=body, article=article)
         if parts:
-            return Draft(article.doc_id, article.title, parts, article.link)
+            return Draft(article.doc_id, article.title, parts, article.link, rescued=failed is not None)
         if failed:
             attempts.append(failed)
     draft = rescue_best(attempts)
