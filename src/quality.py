@@ -16,7 +16,9 @@ FIRST_PERSON_PATTERNS = (
 )
 _FIRST_PERSON_RE = re.compile('|'.join(FIRST_PERSON_PATTERNS))
 _LINK_RE = re.compile(r'https?://|www\.')
-CHECK_EFFORT = 'low'  # 사실검증은 원문과 대조만 하면 돼서 생각하는 양을 낮춘다 (원고 쓰기는 기본값 유지)
+# 사실검증의 생각하는 양 (None = 모델 기본값). 9/28 'low'로 해 봤더니 후킹 문장·비유까지 '근거 없는 사실'로
+# 잡아 원고 재작성(비싼 원고 모델 호출)이 늘어서 기본값으로 되돌렸다.
+CHECK_EFFORT: str | None = None
 
 
 def part_issues(name: str, body: str, tail: str = '') -> list[str]:
