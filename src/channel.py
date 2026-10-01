@@ -45,7 +45,8 @@ BANNED_WORDS = (
 PRODUCT_HOUR: int | None = 20
 PRODUCT_FROM_END = True
 # 교차 추천: 뉴스 글 3개에 1번, 답글 출처 아래에 붙인다 (첫 글에 링크를 달면 노출이 줄어드는 경향이 있어 답글에만)
-CROSS_PROMO = '📸 생활경제 소식은 카드로도 정리 중: 인스타 @newsmanwoody\nhttps://www.instagram.com/newsmanwoody/'
+# 2026-10-02: 인스타 @newsmanwoody 운영 중단으로 끔. 다시 쓰려면 문구를 넣으면 된다.
+CROSS_PROMO = ''
 CROSS_PROMO_EVERY = 3
 
 # 일상글 (2026-09-27 사용자 결정): 매일 12:30, 링크·광고 없는 짧은 대화형 글. 지어낸 경험은 쓰지 않는다 (src/casual.py).
