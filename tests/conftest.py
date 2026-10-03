@@ -5,7 +5,7 @@ GitHub Actions에서 테스트가 돌 때 GITHUB_ACTIONS=true라서, 막지 않�
 """
 import pytest
 
-from src import history, runlog, state
+from src import history, replies, runlog, state
 
 
 @pytest.fixture(autouse=True)
@@ -13,5 +13,6 @@ def isolate_data_files(monkeypatch, tmp_path):
     monkeypatch.setattr(history, 'DEFAULT_HISTORY_PATH', tmp_path / 'history.json')
     monkeypatch.setattr(runlog, 'DEFAULT_RUNS_PATH', tmp_path / 'runs.jsonl')
     monkeypatch.setattr(state, 'DEFAULT_STATE_PATH', tmp_path / 'state.json')
+    monkeypatch.setattr(replies, 'REPLIED_PATH', tmp_path / 'replied.json')
     for name in ('GITHUB_ACTIONS', 'GITHUB_RUN_ID', 'GITHUB_EVENT_NAME', 'GITHUB_REPOSITORY', 'GITHUB_SERVER_URL'):
         monkeypatch.delenv(name, raising=False)

@@ -1,7 +1,7 @@
 """글 한 편 만들기.
 
 - 뉴스 글: RSS 기사 후보 → 선별 → 본문 → 스레드(첫 글 + 답글) → 규칙·원문 대조 검수.
-- 제품 글 (channel.PRODUCT_HOUR 슬롯만): 아직 안 올린 인포크 제휴 제품 → 스레드(첫 글 + 답글 2개). 다 올렸거나 실패하면 뉴스 글.
+- 제품 글 (channel.PRODUCT_HOUR 슬롯, channel.PRODUCT_DAY_PARITY로 이틀에 한 번): 아직 안 올린 인포크 제휴 제품 → 스레드(첫 글 + 답글 2개). 다 올렸거나 실패하면 뉴스 글.
 
 출처 줄·제휴 링크·광고 고지·교차 추천은 LLM이 아니라 코드가 붙인다 (빠뜨리거나 지어낼 수 없게).
 """
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from src import casual, channel, patterns, quality, rescue, schedule, selector
 from src.history import HistoryEntry
@@ -162,6 +163,12 @@ def next_product(products: Sequence[Product], history: Sequence[HistoryEntry]) -
     return next((p for p in ordered if p.url not in used), None)
 
 
+def is_product_day(day: date) -> bool:
+    """제품 글을 올리는 날인지 (channel.PRODUCT_DAY_PARITY: 날짜 서수의 홀짝, None이면 매일)."""
+    parity = getattr(channel, 'PRODUCT_DAY_PARITY', None)  # 제품 글이 없는 채널엔 설정이 없다
+    return parity is None or day.toordinal() % 2 == parity
+
+
 def compose_product(llm: LLMClient, models: Models, product: Product) -> Draft | None:
     user_input = f'제품명: {product.name}\n{patterns.pattern_brief(product.url, product=True)}'
     parts, _ = write_checked(llm, models, 'product', user_input, product_tail(product), PRODUCT, source=None)
@@ -209,12 +216,15 @@ def compose(
     load_products: Callable[[], list[Product]] = lambda: [],
     slot: str = '',
 ) -> Draft:
-    """일상글 슬롯이면 일상글, 제품 슬롯이면 제품 추천(실패하면 뉴스), 그 밖엔 뉴스 글."""
+    """일상글 슬롯이면 일상글, 제품 슬롯·제품 날이면 제품 추천(실패하면 뉴스), 그 밖엔 뉴스 글."""
     if slot and slot_hour == channel.CASUAL_HOUR:
         text, canned = casual.compose_casual(llm, models.writer, history, schedule.slot_datetime(slot), slot,
                                              channel.CASUAL_FALLBACKS)
         return Draft(f'{casual.KIND}:{slot}', text.splitlines()[0][:40], (text,), '', casual.KIND, rescued=canned)
-    if channel.PRODUCT_HOUR is not None and slot_hour == channel.PRODUCT_HOUR:
+    day = (schedule.slot_datetime(slot) if slot else datetime.strptime(today, '%Y-%m-%d')).date()
+    if channel.PRODUCT_HOUR is not None and slot_hour == channel.PRODUCT_HOUR and not is_product_day(day):
+        print('[제품] 오늘은 제품 글 쉬는 날이라 뉴스 글을 올립니다 (이틀에 한 번).')
+    elif channel.PRODUCT_HOUR is not None and slot_hour == channel.PRODUCT_HOUR:
         product = next_product(load_products(), history)
         if product is None:
             print('[제품] 올릴 제품이 없어 뉴스 글로 대신합니다.')

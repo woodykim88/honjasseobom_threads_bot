@@ -6,6 +6,7 @@
     refresh-token  Threads 장기 토큰 갱신 (주 1회)
     insights       최근 글 조회수를 읽어 글쓰기 참고(data/performance.md) 갱신 (하루 1번, AI 호출 없음)
     post-pending   미리 보여 준 글(data/pending.json)을 그대로 게시 (--save-pending으로 만든 것)
+    reply          최근 글의 새 댓글에 혼자써봄 말투로 답글 (한 번 5개·하루 20개 한도, src/replies.py)
 """
 from __future__ import annotations
 
@@ -19,7 +20,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src import channel, collector, compose, history, notifier, performance, post, products, providers, runlog, schedule, token_refresh
+from src import (channel, collector, compose, guard, history, notifier, performance, post, products, providers, replies,
+                 runlog, schedule, state, token_refresh)
 from src.guard import RunResult
 from src.http_client import http_get
 from src.llm import LLMClient, LLMError
@@ -27,7 +29,7 @@ from src.threads import ThreadsClient, ThreadsConfigError, ThreadsError, load_th
 from src import usage
 
 ROOT = Path(__file__).resolve().parent.parent
-JOBS = ('post', 'preview', 'refresh-token', 'post-pending', 'insights')
+JOBS = ('post', 'preview', 'refresh-token', 'post-pending', 'insights', 'reply')
 PREVIEW_PATH = ROOT / 'output' / 'preview.txt'
 KNOWN_ERRORS = (providers.ProviderConfigError, ThreadsConfigError, ThreadsError, schedule.ScheduleError,
                 compose.PipelineError, LLMError)
@@ -63,6 +65,12 @@ def run_job(job: str, env: Mapping[str, str], ai: providers.AISettings | None,
             telegram: notifier.TelegramConfig | None, hour: int | None = None, pending_slot: str = '') -> RunResult:
     if job == 'preview':
         return run_preview(env, ai, hour, pending_slot)
+    if job == 'reply':
+        paused = guard.pause_message(env, state.load_state())
+        if paused:
+            return RunResult('skipped', paused)
+        llm = LLMClient(providers.build_text_backend(ai.text_provider, env))
+        return replies.run_replies(ThreadsClient(load_threads_config(env)), llm, ai.fast_model, telegram)
     if job == 'insights':
         return performance.run_insights(ThreadsClient(load_threads_config(env)), datetime.now(schedule.KST))
     if job == 'refresh-token':
@@ -91,7 +99,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     started = datetime.now(schedule.KST)
     ai: providers.AISettings | None = None
     try:
-        if args.job in ('post', 'preview'):
+        if args.job in ('post', 'preview', 'reply'):
             ai = providers.load_ai_settings(env)
         result = run_job(args.job, env, ai, telegram, args.hour, args.save_pending)
     except KNOWN_ERRORS as e:

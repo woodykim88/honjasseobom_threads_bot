@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from difflib import SequenceMatcher
 
+from src import channel
 from src.channel import SENSITIVE_PATTERNS
 from src.history import HistoryEntry
 from src.llm import LLMClient, load_prompt
@@ -16,6 +17,8 @@ FALLBACK_MIN_SCORE = 4  # 기준을 넘는 기사가 없을 때의 하한 (안�
 TITLE_SIMILARITY_THRESHOLD = 0.6
 MAX_CANDIDATES = 60   # 선별 LLM 입력 상한 (최신 기사부터)
 RECENT_TITLES = 20    # 최근에 쓴 주제 (중복 판단용)
+PRIORITY_BONUS = 1    # channel.PRIORITY_WORDS가 있는 기사 가산점
+PRIORITY_MIN_SCORE = 5  # 이 점수 이상인 기사만 가산 (상한으로 막힌 홍보·사건 기사는 올리지 않음)
 
 _SENSITIVE_RE = re.compile('|'.join(SENSITIVE_PATTERNS)) if SENSITIVE_PATTERNS else None
 
@@ -46,6 +49,15 @@ def filter_candidates(candidates: Sequence[Candidate], history: Sequence[History
     return kept[:MAX_CANDIDATES]
 
 
+def boosted_score(score: int, candidate: Candidate) -> int:
+    """채널이 우선하는 주제(channel.PRIORITY_WORDS)면 가산점. 10점을 넘지 않는다."""
+    words = getattr(channel, 'PRIORITY_WORDS', ())  # 다른 뉴스 채널(건강노트)엔 없는 설정
+    text = f'{candidate.title} {candidate.summary}'
+    if score < PRIORITY_MIN_SCORE or not any(w in text for w in words):
+        return score
+    return min(10, score + PRIORITY_BONUS)
+
+
 def format_candidates(candidates: Sequence[Candidate]) -> str:
     return '\n'.join(f'[{i}] {c.title} ({c.publisher}, {c.date})\n    {c.summary[:300]}'
                      for i, c in enumerate(candidates))
@@ -66,7 +78,8 @@ def rank_candidates(
     best: dict[int, tuple[int, Candidate]] = {}
     for s in result.scores:
         if 0 <= s.index < len(candidates) and s.score >= fallback_min_score and s.index not in best:
-            best[s.index] = (s.score, replace(candidates[s.index], angle=s.angle.strip()))
+            score = boosted_score(s.score, candidates[s.index])
+            best[s.index] = (score, replace(candidates[s.index], angle=s.angle.strip()))
     ordered = sorted(best.values(), key=lambda pair: pair[0], reverse=True)
     passed = [c for score, c in ordered if score >= min_score]
     if not passed and ordered:

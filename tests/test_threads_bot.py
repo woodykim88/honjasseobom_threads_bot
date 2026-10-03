@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -381,3 +381,130 @@ def test_flagged_line_is_dropped_without_rewriting():
                                  'FactCheck': [bad]})
     writes = [r for r in client.requests if r['text_format'].__name__ == 'ThreadPost']
     assert len(writes) == 1 and draft.rescued and '50%' not in draft.parts[1] and '무조건' not in draft.parts[1]
+
+
+# --- 제품 글은 이틀에 한 번 (2026-10-03) ---
+
+def test_product_day_alternates_by_date(monkeypatch):
+    from datetime import date, timedelta
+    monkeypatch.setattr(channel, 'PRODUCT_DAY_PARITY', 0)
+    days = [date(2026, 10, 3) + timedelta(days=i) for i in range(4)]
+    assert [compose.is_product_day(d) for d in days] == [True, False, True, False]
+    monkeypatch.setattr(channel, 'PRODUCT_DAY_PARITY', None)
+    assert all(compose.is_product_day(d) for d in days)
+
+
+def test_product_slot_posts_news_on_off_day(product_channel, monkeypatch):
+    monkeypatch.setattr(channel, 'PRODUCT_DAY_PARITY', 0)
+    llm, _ = fake_llm({'SelectionResult': [selection((0, 8))], 'ThreadPost': [POST], 'FactCheck': [OK_FACTS]})
+    draft = compose.compose(llm, MODELS, (), lambda: list(ARTICLES), lambda a: BODY, '2026-10-04', 20,
+                            lambda: list(PRODUCTS), '2026-10-04T20:00')
+    assert draft.kind == compose.NEWS
+    llm, _ = fake_llm({'ThreadPost': [PRODUCT_POST]})
+    draft = compose.compose(llm, MODELS, (), lambda: list(ARTICLES), lambda a: BODY, '2026-10-05', 20,
+                            lambda: list(PRODUCTS), '2026-10-05T20:00')
+    assert draft.kind == compose.PRODUCT
+
+
+# --- 돈 함정 기사 가산점 ---
+
+def test_priority_words_boost_money_trap_articles(monkeypatch):
+    monkeypatch.setattr(channel, 'PRIORITY_WORDS', ('위약금',))
+    llm, _ = fake_llm({'SelectionResult': [selection((0, 7), (1, 7))]})
+    ranked = selector.rank_candidates(llm, 'f', ARTICLES, (), '2026-09-27')
+    assert [c.doc_id for c in ranked] == ['a1', 'a2']   # 같은 7점이면 위약금 기사가 먼저
+    assert selector.boosted_score(4, ARTICLES[0]) == 4   # 상한으로 막힌 기사는 올리지 않음
+    assert selector.boosted_score(10, ARTICLES[0]) == 10
+
+
+# --- 댓글 자동 답글 ---
+
+from src import replies  # noqa: E402
+from src.replies import ReplyDraft  # noqa: E402
+
+
+class ReplyClient:
+    user_id = 'u1'
+
+    def __init__(self):
+        self.created, self.published = [], []
+
+    def get(self, path, params=None):
+        if path == 'u1/threads':
+            return {'data': [{'id': 'p1', 'text': '렌털 해지 위약금 정리', 'timestamp': '2026-10-03T01:00:00+0000',
+                              'is_reply': False},
+                             {'id': 'p0', 'text': '옛 글', 'timestamp': '2026-09-20T01:00:00+0000', 'is_reply': False}]}
+        assert path == 'p1/replies'
+        return {'data': [
+            {'id': 'c1', 'text': '이거 몰랐네요 저장해요', 'username': 'fan1', 'timestamp': '2026-10-03T02:00:00+0000'},
+            {'id': 'c2', 'text': 'AI 봇이죠?', 'username': 'fan2', 'timestamp': '2026-10-03T03:00:00+0000'},
+            {'id': 'c3', 'text': '내 답글', 'username': 'honjasseobom', 'timestamp': '2026-10-03T03:00:00+0000',
+             'is_reply_owned_by_me': True},
+            {'id': 'c4', 'text': '숨김', 'username': 'x', 'timestamp': '2026-10-03T03:00:00+0000', 'hide_status': 'HIDDEN'},
+        ]}
+
+    def create_text(self, text, reply_to=''):
+        self.created.append((text, reply_to))
+        return 'box'
+
+    def wait_before_publish(self):
+        pass
+
+    def publish(self, box):
+        self.published.append(box)
+        return 'm'
+
+
+NOW_REPLY = datetime(2026, 10, 3, 5, 0, tzinfo=timezone.utc)
+
+
+def test_replies_answer_new_comments_once_and_skip_identity_questions(tmp_path):
+    path = tmp_path / 'replied.json'
+    llm, _ = fake_llm({'ReplyDraft': [ReplyDraft(skip=False, reply='계약서 그 줄만 봐도 반은 막아 ㅠㅠ'),
+                                      ReplyDraft(skip=True, reason='정체 질문')]})
+    client = ReplyClient()
+    r = replies.run_replies(client, llm, 'f', None, NOW_REPLY, path)
+    assert r.outcome == 'success' and client.created == [('계약서 그 줄만 봐도 반은 막아 ㅠㅠ', 'c1')]
+    saved = replies.load_replied(path)
+    assert set(saved['ids']) == {'c1', 'c2'} and saved['days']['2026-10-03'] == 1
+    llm2, openai2 = fake_llm({})
+    replies.run_replies(client, llm2, 'f', None, NOW_REPLY, path)
+    assert openai2.requests == [] and len(client.created) == 1   # 같은 댓글에 두 번 답하지 않음
+
+
+def test_replies_drop_product_push_and_fake_experience(tmp_path):
+    llm, _ = fake_llm({'ReplyDraft': [ReplyDraft(skip=False, reply='나도 써봤는데 이거 쿠팡에서 구매 추천!'),
+                                      ReplyDraft(skip=True, reason='정체 질문')]})
+    client = ReplyClient()
+    replies.run_replies(client, llm, 'f', None, NOW_REPLY, tmp_path / 'r.json')
+    assert client.created == []
+
+
+def test_replies_respect_daily_limit(tmp_path):
+    path = tmp_path / 'replied.json'
+    replies.save_replied({'ids': [], 'days': {'2026-10-03': replies.MAX_PER_DAY}}, path)
+    llm, _ = fake_llm({})
+    r = replies.run_replies(ReplyClient(), llm, 'f', None, NOW_REPLY, path)
+    assert r.outcome == 'skipped'
+
+
+def test_reply_issues_block_links_push_and_human_claims():
+    assert replies.reply_issues('위약금 진짜 억울하지 ㅠㅠ 계약서 그 줄부터 봐') == []
+    assert replies.reply_issues('여기 링크 https://x.com')
+    assert replies.reply_issues('30대 여자인 내가 보기엔 이거 구매각')
+    assert replies.reply_issues('가' * 121)
+
+
+def test_reply_job_skips_when_paused(monkeypatch):
+    from src import main as main_mod, providers
+    ai = providers.AISettings('openai', 'w', 'f')
+    r = main_mod.run_job('reply', {'PAUSED': 'true'}, ai, None)
+    assert r.outcome == 'skipped'
+
+
+def test_news_writer_prompt_asks_for_natural_repost_line():
+    from src.llm import PROMPTS_DIR
+    writer = (PROMPTS_DIR / 'writer.md').read_text(encoding='utf-8')
+    assert '리포스트 부르는 법' in writer and '조건을 거는 거래' in writer
+    assert '리포스트' in (PROMPTS_DIR / 'factcheck.md').read_text(encoding='utf-8')
+    assert channel.CROSS_PROMO == ''

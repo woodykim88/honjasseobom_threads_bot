@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: 'post=지금 게시할 슬롯 게시 / preview=글만 만들기(게시 안 함) / refresh-token=토큰 갱신 / post-pending=미리 보여 준 글 그대로 게시'
+        description: 'post=지금 게시할 슬롯 게시 / preview=글만 만들기(게시 안 함) / refresh-token=토큰 갱신 / post-pending=미리 보여 준 글 그대로 게시 / reply=새 댓글에 답글'
         type: choice
-        options: [preview, post, refresh-token, post-pending, insights]
+        options: [preview, post, refresh-token, post-pending, insights, reply]
         default: preview
       hour:
         description: 'preview 전용: 제품 슬롯 시각(혼자써봄은 20)을 넣으면 제품 추천 글, 비우면 뉴스 글'
