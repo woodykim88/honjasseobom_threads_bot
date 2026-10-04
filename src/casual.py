@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import random
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from src import quality
+from src import kr_calendar, quality
 from src.history import HistoryEntry
 from src.llm import LLMClient, load_prompt
 
@@ -31,12 +31,19 @@ class CasualPost(BaseModel):
     text: str = Field(description='일상글 한 개, 30~120자, 물음표로 끝나는 질문 포함')
 
 
+def _day(now: date) -> date:
+    return now.date() if isinstance(now, datetime) else now
+
+
 def context_line(now: datetime) -> str:
-    return f'오늘: {now:%m월 %d일} {WEEKDAYS[now.weekday()]}요일, {SEASONS[now.month]}'
+    return (f'오늘: {now:%m월 %d일} {WEEKDAYS[now.weekday()]}요일, {SEASONS[now.month]}\n'
+            f'달력 사실(대한민국 공휴일 반영, 어기지 마): {kr_calendar.describe(_day(now))}')
 
 
-def issues(text: str) -> list[str]:
+def issues(text: str, now: datetime | None = None) -> list[str]:
     found = quality.rule_issues(text)
+    if now is not None:
+        found += kr_calendar.commute_issues(text, _day(now))
     if len(text) > MAX_CHARS:
         found.append(f'{MAX_CHARS}자를 넘습니다 (현재 {len(text)}자). 더 짧게 쓰세요.')
     if '?' not in text:
@@ -60,7 +67,7 @@ def compose_casual(llm: LLMClient, model: str, history: Sequence[HistoryEntry], 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         extra = ('\n\n이전 글이 검수에서 떨어졌어. 고쳐서 다시 써:\n' + '\n'.join(f'- {f}' for f in feedback)) if feedback else ''
         text = llm.parse(model, load_prompt('casual'), user_input + extra, CasualPost).text.strip()
-        feedback = issues(text)
+        feedback = issues(text, now)
         if not feedback:
             print(f'[일상글 통과] 시도 {attempt}')
             return text, False

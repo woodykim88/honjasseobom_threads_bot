@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from src import casual, channel, patterns, quality, rescue, schedule, selector
+from src import casual, channel, kr_calendar, patterns, quality, rescue, schedule, selector
 from src.history import HistoryEntry
 from src.llm import LLMClient, load_prompt
 from src.models import Candidate, ThreadPost
@@ -68,12 +68,26 @@ def product_tail(product: Product) -> str:
     return f'\n\n👉 {product.name}\n{product.url}\n\n{disclosure}'
 
 
-def check_post(post: ThreadPost, tail: str, kind: str = NEWS) -> list[str]:
+def calendar_fact(day: date) -> str:
+    return f'달력 사실(대한민국 공휴일 반영, 어기지 마): {kr_calendar.describe(day)}'
+
+
+def calendar_bad_lines(post: ThreadPost, day: date | None) -> list[str]:
+    """공휴일 달력과 어긋나는("내일 출근" 등) 줄. 구제 발행 때 이 줄만 뺀다."""
+    if day is None:
+        return []
+    lines = [ln for ln in '\n'.join((post.hook, post.tips, post.pitch)).splitlines() if ln.strip()]
+    return [ln for ln in lines if kr_calendar.commute_issues(ln, day)]
+
+
+def check_post(post: ThreadPost, tail: str, kind: str = NEWS, day: date | None = None) -> list[str]:
     parts = [('hook', post.hook, ''), ('tips', post.tips, tail if kind == NEWS else '')]
     if kind == PRODUCT:
         parts.append(('pitch', post.pitch, tail))
     issues = [i for name, body, t in parts for i in quality.part_issues(name, body, t)]
     issues += quality.ending_issues(parts[-1][1])
+    if day is not None:
+        issues += kr_calendar.commute_issues('\n'.join((post.hook, post.tips, post.pitch)), day)
     return issues + quality.rule_issues('\n'.join(body for _, body, _ in parts))
 
 
@@ -118,7 +132,8 @@ def _unmatched(original: str, bad: Sequence[str]) -> bool:
 
 
 def write_checked(llm: LLMClient, models: Models, prompt: str, user_input: str, tail: str, kind: str,
-                  source: str | None, article: Candidate | None = None) -> tuple[tuple[str, ...] | None, Attempt | None]:
+                  source: str | None, article: Candidate | None = None,
+                  day: date | None = None) -> tuple[tuple[str, ...] | None, Attempt | None]:
     """(통과한 글, None), (걸린 줄을 뺀 글, 걸린 원고) 또는 (None, 가장 나은 탈락 원고)를 반환합니다.
 
     source가 있으면(뉴스) 원문 대조 사실 검증까지 합니다. 제품 글은 제품명 밖의 사실을 규칙으로 막는다.
@@ -128,11 +143,12 @@ def write_checked(llm: LLMClient, models: Models, prompt: str, user_input: str, 
     for attempt in range(1, MAX_WRITE_ATTEMPTS + 1):
         extra = ('\n\n이전 글이 자동 검수에서 탈락했어. 아래를 고쳐서 다시 써:\n' + '\n'.join(f'- {f}' for f in feedback)) if feedback else ''
         post = llm.parse(models.writer, load_prompt(prompt), user_input + extra, ThreadPost)
-        issues = check_post(post, tail, kind)
-        bad: list[str] = []
+        issues = check_post(post, tail, kind, day)
+        bad: list[str] = calendar_bad_lines(post, day)
         if source is not None:
-            fact_issues, bad = quality.fact_problems(llm, models.fast, f'{post.hook}\n{post.tips}', source)
+            fact_issues, facts_bad = quality.fact_problems(llm, models.fast, f'{post.hook}\n{post.tips}', source)
             issues += fact_issues
+            bad += facts_bad
         if not issues:
             print(f'[검수 통과] 시도 {attempt}')
             return assemble(post, tail, kind), None
@@ -169,15 +185,18 @@ def is_product_day(day: date) -> bool:
     return parity is None or day.toordinal() % 2 == parity
 
 
-def compose_product(llm: LLMClient, models: Models, product: Product) -> Draft | None:
+def compose_product(llm: LLMClient, models: Models, product: Product, day: date | None = None) -> Draft | None:
     user_input = f'제품명: {product.name}\n{patterns.pattern_brief(product.url, product=True)}'
-    parts, _ = write_checked(llm, models, 'product', user_input, product_tail(product), PRODUCT, source=None)
+    if day is not None:
+        user_input += f'\n{calendar_fact(day)}'
+    parts, _ = write_checked(llm, models, 'product', user_input, product_tail(product), PRODUCT, source=None, day=day)
     return Draft(product.url, product.name, parts, product.url, PRODUCT) if parts else None
 
 
 def compose_news(
     llm: LLMClient, models: Models, history: Sequence[HistoryEntry],
     load_candidates: Callable[[], list[Candidate]], fetch_body: Callable[[Candidate], str | None], today: str,
+    day: date | None = None,
 ) -> Draft:
     """점수 높은 기사부터 본문을 읽어 글을 쓰고, 검수를 통과한 첫 글을 반환합니다."""
     candidates = selector.filter_candidates(load_candidates(), history)
@@ -192,9 +211,10 @@ def compose_news(
         if not body:
             continue
         user_input = (f'매체: {article.publisher}\n기사 제목: {article.title}\n독자 포인트: {article.angle}\n'
-                      f'{patterns.pattern_brief(article.doc_id)}\n--- 기사 본문 ---\n{body}')
+                      f'{patterns.pattern_brief(article.doc_id)}\n'
+                      + (f'{calendar_fact(day)}\n' if day is not None else '') + f'--- 기사 본문 ---\n{body}')
         parts, failed = write_checked(llm, models, 'writer', user_input, source_tail(article, promo), NEWS,
-                                      source=body, article=article)
+                                      source=body, article=article, day=day)
         if parts:
             return Draft(article.doc_id, article.title, parts, article.link, rescued=failed is not None)
         if failed:
@@ -217,11 +237,11 @@ def compose(
     slot: str = '',
 ) -> Draft:
     """일상글 슬롯이면 일상글, 제품 슬롯·제품 날이면 제품 추천(실패하면 뉴스), 그 밖엔 뉴스 글."""
+    day = (schedule.slot_datetime(slot) if slot else datetime.strptime(today, '%Y-%m-%d')).date()
     if slot and slot_hour == channel.CASUAL_HOUR:
         text, canned = casual.compose_casual(llm, models.writer, history, schedule.slot_datetime(slot), slot,
                                              channel.CASUAL_FALLBACKS)
         return Draft(f'{casual.KIND}:{slot}', text.splitlines()[0][:40], (text,), '', casual.KIND, rescued=canned)
-    day = (schedule.slot_datetime(slot) if slot else datetime.strptime(today, '%Y-%m-%d')).date()
     if channel.PRODUCT_HOUR is not None and slot_hour == channel.PRODUCT_HOUR and not is_product_day(day):
         print('[제품] 오늘은 제품 글 쉬는 날이라 뉴스 글을 올립니다 (이틀에 한 번).')
     elif channel.PRODUCT_HOUR is not None and slot_hour == channel.PRODUCT_HOUR:
@@ -230,7 +250,7 @@ def compose(
             print('[제품] 올릴 제품이 없어 뉴스 글로 대신합니다.')
         else:
             print(f'[제품] {product.name}')
-            draft = compose_product(llm, models, product)
+            draft = compose_product(llm, models, product, day)
             if draft:
                 return draft
-    return compose_news(llm, models, history, load_candidates, fetch_body, today)
+    return compose_news(llm, models, history, load_candidates, fetch_body, today, day)
