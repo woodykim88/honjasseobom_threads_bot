@@ -14,6 +14,8 @@ NAME = '혼자써봄'
 HANDLE = 'honjasseobom'
 TOPIC = '생활필수품 뉴스'
 CMD_PREFIX = 'hj'  # 텔레그램 명령: /hj_stop /hj_skip /hj_resume (다른 Threads 채널과 겹치지 않게)
+# 첫 글에 붙이는 토픽 태그 (2026-10-10, 글당 1개만 가능). 토픽 피드·검색에 걸리게 하려는 것. 비우면 안 붙인다.
+TOPIC_TAG = '자취'
 
 # 언론사가 직접 배포하는 공식 RSS만 쓴다 (모두 robots.txt가 /rss/ 수집을 허용, 2026-09-27 확인).
 # 소비자가만드는신문은 robots.txt가 /rss/를 막아서 뺐다.
