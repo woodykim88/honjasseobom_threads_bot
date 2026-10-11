@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src import channel, compose, guard, history, notifier, schedule, state
+from src import blog, channel, compose, guard, history, notifier, schedule, state
 from src.guard import RunResult
 from src.models import Candidate
 from src.products import Product
@@ -32,6 +32,7 @@ class PostDeps:
     load_candidates: Callable[[], list[Candidate]]
     fetch_body: Callable[[Candidate], str | None]
     load_products: Callable[[], list[Product]] = lambda: []
+    load_blog_posts: Callable[[], list[blog.BlogPost]] = lambda: []
     tg_get: Callable[..., Any] | None = None
 
 
@@ -59,7 +60,7 @@ def publish_replies(client: ThreadsClient, parent_id: str, replies: tuple[str, .
 def post_slot(key: str, deps: PostDeps, llm: LLMClient, past: tuple[history.HistoryEntry, ...],
               now: datetime) -> history.HistoryEntry:
     draft = compose.compose(llm, deps.models, past, deps.load_candidates, deps.fetch_body, key[:10],
-                            schedule.slot_datetime(key).hour, deps.load_products, key)
+                            schedule.slot_datetime(key).hour, deps.load_products, key, deps.load_blog_posts)
     container = deps.client.create_text(draft.parts[0])
     entry = history.HistoryEntry(slot=key, status=PUBLISHING, title=draft.title, seed=draft.kind,
                                  doc_id=draft.key, source_url=draft.source_url, caption=draft.text,
@@ -105,7 +106,7 @@ def run_post(env: Mapping[str, str], deps: PostDeps, telegram: notifier.Telegram
             done = post_slot(key, deps, llm, past, now)
             past = history.load_history()
             posts.append(PostRecord(done.title, done.status, key, done.permalink))
-            kind = {compose.PRODUCT: '제품 추천', 'casual': '일상글'}.get(done.seed, '뉴스')
+            kind = {compose.PRODUCT: '제품 추천', compose.BLOG: '블로그 연작', 'casual': '일상글'}.get(done.seed, '뉴스')
             mark = '⚠️ 검수 문제 줄을 빼고' if RESCUED_NOTE in done.note else '✅'
             notifier.notify(telegram, f'{mark} {kind} 게시: {done.title}\n{done.permalink or "(주소 조회 실패)"}')
         except (compose.PipelineError, LLMError) as e:

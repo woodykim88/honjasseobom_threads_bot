@@ -20,7 +20,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src import (channel, collector, compose, guard, history, notifier, performance, post, products, providers, replies,
+from src import (blog, channel, collector, compose, guard, history, notifier, performance, post, products, providers, replies,
                  runlog, schedule, state, token_refresh)
 from src.guard import RunResult
 from src.http_client import http_get
@@ -47,11 +47,16 @@ def load_products():
     return products.fetch_products(http_get)
 
 
+def load_blog_posts():
+    return blog.fetch_posts(http_get)
+
+
 def run_preview(env: Mapping[str, str], ai: providers.AISettings, hour: int | None, pending_slot: str = '') -> RunResult:
     llm = LLMClient(providers.build_text_backend(ai.text_provider, env))
     today = datetime.now(schedule.KST).strftime('%Y-%m-%d')
     draft = compose.compose(llm, compose.Models(ai.writer_model, ai.fast_model), history.load_history(),
-                            load_candidates, fetch_body, today, hour, load_products)
+                            load_candidates, fetch_body, today, hour, load_products,
+                            load_blog_posts=load_blog_posts)
     PREVIEW_PATH.parent.mkdir(parents=True, exist_ok=True)
     PREVIEW_PATH.write_text(draft.text, encoding='utf-8')
     if pending_slot:
@@ -82,6 +87,7 @@ def run_job(job: str, env: Mapping[str, str], ai: providers.AISettings | None,
         models=compose.Models(ai.writer_model, ai.fast_model),
         client=ThreadsClient(load_threads_config(env)),
         load_candidates=load_candidates, fetch_body=fetch_body, load_products=load_products,
+        load_blog_posts=load_blog_posts,
     )
     return post.run_post(env, deps, telegram, datetime.now(timezone.utc))
 

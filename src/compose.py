@@ -1,7 +1,8 @@
 """글 한 편 만들기.
 
 - 뉴스 글: RSS 기사 후보 → 선별 → 본문 → 스레드(첫 글 + 답글) → 규칙·원문 대조 검수.
-- 제품 글 (channel.PRODUCT_HOUR 슬롯, channel.PRODUCT_DAY_PARITY로 이틀에 한 번): 아직 안 올린 인포크 제휴 제품 → 스레드(첫 글 + 답글 2개). 다 올렸거나 실패하면 뉴스 글.
+- 제품 글 (channel.PRODUCT_HOUR 슬롯, channel.PRODUCT_DAY_PARITY로 이틀에 한 번): 아직 안 올린 인포크 제휴 제품 → 스레드(첫 글 + 답글 2개). 다 올렸거나 실패하면 뉴스 글. (2026-10-11부터 PRODUCT_HOUR=None으로 끔)
+- 블로그 글 (channel.BLOG_HOUR 슬롯, channel.BLOG_DAY_PARITY인 날): 아직 안 올린 내 블로그 생활 글 → 스레드(첫 글 + 답글 2개, 마지막 답글 끝에 블로그 주소). 없거나 실패하면 뉴스 글.
 
 출처 줄·제휴 링크·광고 고지·교차 추천은 LLM이 아니라 코드가 붙인다 (빠뜨리거나 지어낼 수 없게).
 """
@@ -11,7 +12,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from src import casual, channel, kr_calendar, patterns, quality, rescue, schedule, selector
+from src import blog, casual, channel, kr_calendar, patterns, quality, rescue, schedule, selector
 from src.history import HistoryEntry
 from src.llm import LLMClient, load_prompt
 from src.models import Candidate, ThreadPost
@@ -22,6 +23,7 @@ MAX_ARTICLE_ATTEMPTS = 3  # 본문을 못 가져오거나 검수에 떨어지면
 COUPANG_DISCLOSURE = '이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.'
 AFFILIATE_DISCLOSURE = '이 글은 제휴 링크를 포함하며, 구매 시 수수료를 받을 수 있어요.'
 PRODUCT = 'product'
+BLOG = 'blog'
 NEWS = 'news'
 
 
@@ -68,6 +70,10 @@ def product_tail(product: Product) -> str:
     return f'\n\n👉 {product.name}\n{product.url}\n\n{disclosure}'
 
 
+def blog_tail(post: blog.BlogPost) -> str:
+    return f'\n\n📖 {post.title}\n{post.url}'
+
+
 def calendar_fact(day: date) -> str:
     return f'달력 사실(대한민국 공휴일 반영, 어기지 마): {kr_calendar.describe(day)}'
 
@@ -82,7 +88,7 @@ def calendar_bad_lines(post: ThreadPost, day: date | None) -> list[str]:
 
 def check_post(post: ThreadPost, tail: str, kind: str = NEWS, day: date | None = None) -> list[str]:
     parts = [('hook', post.hook, ''), ('tips', post.tips, tail if kind == NEWS else '')]
-    if kind == PRODUCT:
+    if kind in (PRODUCT, BLOG):
         parts.append(('pitch', post.pitch, tail))
     issues = [i for name, body, t in parts for i in quality.part_issues(name, body, t)]
     issues += quality.ending_issues(parts[-1][1])
@@ -92,7 +98,7 @@ def check_post(post: ThreadPost, tail: str, kind: str = NEWS, day: date | None =
 
 
 def assemble(post: ThreadPost, tail: str, kind: str) -> tuple[str, ...]:
-    if kind == PRODUCT:
+    if kind in (PRODUCT, BLOG):
         return post.hook.strip(), post.tips.strip(), post.pitch.strip() + tail
     return post.hook.strip(), post.tips.strip() + tail
 
@@ -193,6 +199,24 @@ def compose_product(llm: LLMClient, models: Models, product: Product, day: date 
     return Draft(product.url, product.name, parts, product.url, PRODUCT) if parts else None
 
 
+def next_blog_post(posts: Sequence[blog.BlogPost], history: Sequence[HistoryEntry]) -> blog.BlogPost | None:
+    """아직 안 올린 블로그 글 중 가장 오래된 것부터 (최신 글은 블로그 쪽 노출이 아직 약해 뒤로 미룬다)."""
+    used = {e.doc_id for e in history if e.doc_id and e.status in ('PUBLISHED', 'PUBLISHING', 'SKIPPED')}
+    return next((p for p in reversed(posts) if p.url not in used), None)
+
+
+def is_blog_day(day: date) -> bool:
+    """블로그 글을 올리는 날인지 (channel.BLOG_DAY_PARITY: 날짜 서수의 홀짝). 나머지 날은 같은 슬롯에 일상글."""
+    return day.toordinal() % 2 == channel.BLOG_DAY_PARITY
+
+
+def compose_blog(llm: LLMClient, models: Models, post: blog.BlogPost, day: date | None = None) -> Draft | None:
+    user_input = (f'블로그 글 제목: {post.title}\n{patterns.pattern_brief(post.url)}\n'
+                  + (f'{calendar_fact(day)}\n' if day is not None else '') + f'--- 블로그 글 본문 ---\n{post.text}')
+    parts, _ = write_checked(llm, models, 'blog', user_input, blog_tail(post), BLOG, source=post.text, day=day)
+    return Draft(post.url, post.title, parts, post.url, BLOG) if parts else None
+
+
 def compose_news(
     llm: LLMClient, models: Models, history: Sequence[HistoryEntry],
     load_candidates: Callable[[], list[Candidate]], fetch_body: Callable[[Candidate], str | None], today: str,
@@ -235,14 +259,27 @@ def compose(
     slot_hour: int | None = None,
     load_products: Callable[[], list[Product]] = lambda: [],
     slot: str = '',
+    load_blog_posts: Callable[[], list[blog.BlogPost]] = lambda: [],
 ) -> Draft:
-    """일상글 슬롯이면 일상글, 제품 슬롯·제품 날이면 제품 추천(실패하면 뉴스), 그 밖엔 뉴스 글."""
+    """일상글 슬롯이면 일상글, 블로그 슬롯이면 블로그 날엔 블로그 연작·아닌 날엔 일상글, 제품 슬롯·제품 날이면 제품 추천, 그 밖엔 뉴스 글.
+    블로그·제품 글을 못 만들면 뉴스 글로 대신한다."""
     day = (schedule.slot_datetime(slot) if slot else datetime.strptime(today, '%Y-%m-%d')).date()
-    if slot and slot_hour == channel.CASUAL_HOUR:
+    evening_casual = (slot and channel.BLOG_HOUR is not None and slot_hour == channel.BLOG_HOUR
+                      and not is_blog_day(day))
+    if slot and (slot_hour == channel.CASUAL_HOUR or evening_casual):
         text, canned = casual.compose_casual(llm, models.writer, history, schedule.slot_datetime(slot), slot,
                                              channel.CASUAL_FALLBACKS)
         return Draft(f'{casual.KIND}:{slot}', text.splitlines()[0][:40], (text,), '', casual.KIND, rescued=canned)
-    if channel.PRODUCT_HOUR is not None and slot_hour == channel.PRODUCT_HOUR and not is_product_day(day):
+    if channel.BLOG_HOUR is not None and slot_hour == channel.BLOG_HOUR:
+        post = next_blog_post(load_blog_posts(), history)
+        if post is None:
+            print('[블로그] 올릴 블로그 글이 없어 뉴스 글로 대신합니다.')
+        else:
+            print(f'[블로그] {post.title}')
+            draft = compose_blog(llm, models, post, day)
+            if draft:
+                return draft
+    elif channel.PRODUCT_HOUR is not None and slot_hour == channel.PRODUCT_HOUR and not is_product_day(day):
         print('[제품] 오늘은 제품 글 쉬는 날이라 뉴스 글을 올립니다 (이틀에 한 번).')
     elif channel.PRODUCT_HOUR is not None and slot_hour == channel.PRODUCT_HOUR:
         product = next_product(load_products(), history)
