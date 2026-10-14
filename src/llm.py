@@ -7,8 +7,10 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
+from src import topic_hints
 from src.providers import TextBackend
 
+CASUAL_HINT_USAGE = '참고 재료일 뿐이야. 채널 성격과 원래 방향이 우선이고, 어색하지 않게 맞는 소재가 있을 때만 일상 질문 소재로 써 (안 맞으면 무시하고 평소대로). 숫자·사실은 지어내지 마.'
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / 'prompts'
 DEFAULT_MAX_CALLS = 16  # 최악의 경우 화제 1 + 선별 1 + 3주제 x 2회 x (작성+검증) = 14회
 
@@ -51,6 +53,8 @@ def load_prompt(name: str) -> str:
         if PERFORMANCE_PATH.exists():
             text += PERFORMANCE_PATH.read_text(encoding='utf-8')
         text += reference_examples()
+    if name == 'casual':
+        text += topic_hints.brief(topic_hints.load(topic_hints.today_kst()), CASUAL_HINT_USAGE)
     return text
 
 

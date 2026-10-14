@@ -9,6 +9,7 @@ from difflib import SequenceMatcher
 from src import channel
 from src.channel import SENSITIVE_PATTERNS
 from src.history import HistoryEntry
+from src import topic_hints
 from src.llm import LLMClient, load_prompt
 from src.models import Candidate, SelectionResult
 
@@ -58,9 +59,21 @@ def boosted_score(score: int, candidate: Candidate) -> int:
     return min(10, score + PRIORITY_BONUS)
 
 
-def format_candidates(candidates: Sequence[Candidate]) -> str:
-    return '\n'.join(f'[{i}] {c.title} ({c.publisher}, {c.date})\n    {c.summary[:300]}'
-                     for i, c in enumerate(candidates))
+def format_candidates(candidates: Sequence[Candidate], hints: Sequence[dict] = ()) -> str:
+    """제목에 지식창고 조사 키워드가 든 후보는 [조사 추천: 소재]를 붙인다 (2026-10-15)."""
+    lines = []
+    for i, c in enumerate(candidates):
+        hit = topic_hints.matches(f'{c.title} {c.summary}', list(hints))
+        tag = f' [조사 추천: {", ".join(hit)}]' if hit else ''
+        lines.append(f'[{i}]{tag} {c.title} ({c.publisher}, {c.date})\n    {c.summary[:300]}')
+    return '\n'.join(lines)
+
+
+def hint_bonus(score: int, candidate: Candidate, hints: Sequence[dict]) -> int:
+    """조사 추천 소재면 +1. 이미 기준(MIN_SCORE)을 넘은 후보 사이에서만 순서를 바꾼다."""
+    if score < MIN_SCORE or not topic_hints.matches(f'{candidate.title} {candidate.summary}', list(hints)):
+        return score
+    return min(10, score + 1)
 
 
 def rank_candidates(
@@ -71,14 +84,16 @@ def rank_candidates(
     회차를 건너뛰지 않기 위해서다. 독자 포인트(angle)를 후보에 붙입니다."""
     if not candidates:
         return []
+    hints = topic_hints.load(topic_hints.today_kst())
     titles = [e.title for e in history if e.title][-RECENT_TITLES:]
     recent = '\n'.join(f'- {t}' for t in titles) or '(아직 없음)'
-    user_input = f'오늘 날짜: {today}\n\n최근에 올린 글 (같은 주제 피하기):\n{recent}\n\n후보 목록:\n{format_candidates(candidates)}'
+    user_input = f'오늘 날짜: {today}\n\n최근에 올린 글 (같은 주제 피하기):\n{recent}\n\n후보 목록:\n{format_candidates(candidates, hints)}'
     result = llm.parse(model, load_prompt('selector'), user_input, SelectionResult)
     best: dict[int, tuple[int, Candidate]] = {}
     for s in result.scores:
         if 0 <= s.index < len(candidates) and s.score >= fallback_min_score and s.index not in best:
             score = boosted_score(s.score, candidates[s.index])
+            score = hint_bonus(score, candidates[s.index], hints)
             best[s.index] = (score, replace(candidates[s.index], angle=s.angle.strip()))
     ordered = sorted(best.values(), key=lambda pair: pair[0], reverse=True)
     passed = [c for score, c in ordered if score >= min_score]
