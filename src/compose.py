@@ -67,7 +67,8 @@ def source_tail(article: Candidate, promo: bool = False) -> str:
 
 def product_tail(product: Product) -> str:
     disclosure = COUPANG_DISCLOSURE if product.is_coupang else AFFILIATE_DISCLOSURE
-    return f'\n\n👉 {product.name}\n{product.url}\n\n{disclosure}'
+    video = f'\n\n🎬 30초 영상으로 보기\n{product.video_url}' if product.video_url else ''
+    return f'\n\n👉 {product.name}\n{product.url}{video}\n\n{disclosure}'
 
 
 def blog_tail(post: blog.BlogPost) -> str:
@@ -195,7 +196,10 @@ def compose_product(llm: LLMClient, models: Models, product: Product, day: date 
     user_input = f'제품명: {product.name}\n{patterns.pattern_brief(product.url, product=True)}'
     if day is not None:
         user_input += f'\n{calendar_fact(day)}'
-    parts, _ = write_checked(llm, models, 'product', user_input, product_tail(product), PRODUCT, source=None, day=day)
+    if product.facts:  # 찐템노트 상품: 영상 캡션(사실 확인됨)을 근거로 쓰고 사실 검증도 그 캡션에 대조한다
+        user_input += f'\n--- 찐템노트 영상 캡션(상세페이지로 사실 확인됨, 꿀팁·사실은 이 안에서만) ---\n{product.facts}'
+    parts, _ = write_checked(llm, models, 'product', user_input, product_tail(product), PRODUCT,
+                             source=product.facts or None, day=day)
     return Draft(product.url, product.name, parts, product.url, PRODUCT) if parts else None
 
 

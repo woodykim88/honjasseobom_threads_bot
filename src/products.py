@@ -9,10 +9,15 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from src.http_client import HttpGet
 
 INPOCK_URL = 'https://link.inpock.co.kr/shoperwoody'
+# 찐템노트(인스타·유튜브 쇼츠) 상품 피드: 찐템노트 맥의 일일 백업이 이 파일을 갱신해 푸시한다 (2026-10-21)
+JJINTEM_FEED = Path(__file__).resolve().parent.parent / 'data' / 'jjintem_feed.json'
+_KST = timezone(timedelta(hours=9))
 EXCLUDED_WORDS = (
     '관절', '패치', '프로틴', '단백질', '올레샷', '영양제', '비타민', '유산균', '홍삼', '콜라겐', '다이어트',
     '마스크팩', '메디힐', '크림', '세럼', '앰플', '화장품', '건강기능', '효능',
@@ -26,6 +31,9 @@ class Product:
     name: str
     url: str
     image: str = ''
+    facts: str = ''       # 찐템노트 영상 캡션(상세페이지로 사실 확인됨). 있으면 꿀팁·사실은 이 안에서만 쓴다
+    video_url: str = ''   # 찐템노트 유튜브 쇼츠
+    publish_at: str = ''  # 찐템노트 게시 시각 'YYYY-MM-DD HH:MM' (KST)
 
     @property
     def is_coupang(self) -> bool:
@@ -63,3 +71,18 @@ def parse_products(page_html: str) -> list[Product]:
 
 def fetch_products(get: HttpGet) -> list[Product]:
     return parse_products(get(INPOCK_URL))
+
+
+def load_jjintem_feed(now: datetime, path: Path = JJINTEM_FEED) -> list[Product]:
+    """찐템노트에 이미 공개된 상품만, 오래된 것부터 (next_product 가 뒤에서부터 = 최신부터 고른다)."""
+    if not path.exists():
+        return []
+    cutoff = now.astimezone(_KST).strftime('%Y-%m-%d %H:%M')
+    items = sorted(json.loads(path.read_text(encoding='utf-8')), key=lambda i: i.get('publish_at', ''))
+    out = []
+    for i in items:
+        name, url, when = (i.get('product') or '').strip(), (i.get('link') or '').strip(), i.get('publish_at') or ''
+        if not name or not url.startswith('https://') or not when or when > cutoff or is_excluded(name):
+            continue
+        out.append(Product(name=name, url=url, facts=i.get('facts') or '', video_url=i.get('yt_url') or '', publish_at=when))
+    return out

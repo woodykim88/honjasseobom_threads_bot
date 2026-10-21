@@ -44,6 +44,8 @@ def fetch_body(article):
 
 
 def load_products():
+    if getattr(channel, 'PRODUCT_SOURCE', 'inpock') == 'jjintem':
+        return products.load_jjintem_feed(datetime.now(timezone.utc))
     return products.fetch_products(http_get)
 
 

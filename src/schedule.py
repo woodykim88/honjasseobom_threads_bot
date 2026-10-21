@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 KST = timezone(timedelta(hours=9), 'KST')
-MAX_POSTS_PER_DAY = 3
+MAX_POSTS_PER_DAY = 4  # 2026-10-21: 21:00 찐템노트 상품 글 추가 (Threads 한도는 하루 250개)
 DEFAULT_TIMES = '08:00,20:00'
 # .github/workflows/cardnews.yml의 cron이 맞춰져 있는 발행 시각. PUBLISH_TIMES를 바꾸면 cron도 바꿔야 한다.
 CRON_TIMES = ((8, 0), (20, 0))
