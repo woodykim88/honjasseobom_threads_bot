@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import random
+import re
 from collections.abc import Sequence
 from datetime import date, datetime
 
@@ -23,9 +24,14 @@ RECENT = 10
 WEEKDAYS = '월화수목금토일'
 SEASONS = {12: '겨울', 1: '겨울', 2: '겨울', 3: '봄', 4: '봄', 5: '봄', 6: '여름', 7: '여름', 8: '여름',
            9: '가을', 10: '가을', 11: '가을'}
+# 시간대 (2026-10-22): 12:30 글이 "목요일 밤엔…"으로 나가 어색했다. 시각을 알려 주고 낮 글의 밤·저녁 표현은 검수에서 걸러 낸다.
+DAYTIME_END = 17
+NIGHT_WORDS = re.compile(r'밤엔|밤에는|요일 밤|저녁엔|저녁에는|자기 전|퇴근길')
 FORMATS = ('누구나 한 줄로 답할 수 있는 질문', '두 가지 중 고르기 (A vs B)', '오늘 요일·계절에 맞춘 공감 한마디 + 질문',
            '채널 주제와 가까운 작은 공감 + 질문',
            '요즘 계절에 늘어나는 생활비(난방·장보기·옷·간식) 공감 + 질문')
+# 2026-10-22: 14일 조회 상위 일상글 3개(481·289·262회)가 모두 계절 생활비 형식이라 세 배로 자주 고른다.
+FORMAT_WEIGHTS = (1, 1, 1, 1, 3)
 
 
 class CasualPost(BaseModel):
@@ -36,8 +42,19 @@ def _day(now: date) -> date:
     return now.date() if isinstance(now, datetime) else now
 
 
+def period(hour: int) -> str:
+    if 5 <= hour < 11:
+        return '아침'
+    if 11 <= hour < 14:
+        return '점심'
+    if 14 <= hour < DAYTIME_END:
+        return '오후'
+    return '저녁' if DAYTIME_END <= hour < 22 else '밤'
+
+
 def context_line(now: datetime) -> str:
     return (f'오늘: {now:%m월 %d일} {WEEKDAYS[now.weekday()]}요일, {SEASONS[now.month]}\n'
+            f'지금 시각: {now:%H:%M} ({period(now.hour)}) - 글은 지금 이 시간에 읽혀\n'
             f'달력 사실(대한민국 공휴일 반영, 어기지 마): {kr_calendar.describe(_day(now))}')
 
 
@@ -45,6 +62,8 @@ def issues(text: str, now: datetime | None = None) -> list[str]:
     found = quality.rule_issues(text)
     if now is not None:
         found += kr_calendar.commute_issues(text, _day(now))
+        if isinstance(now, datetime) and now.hour < DAYTIME_END and NIGHT_WORDS.search(text):
+            found.append(f'지금은 {period(now.hour)} 시간대예요. 밤·저녁 장면 말고 지금 시간에 맞게 쓰세요.')
     if len(text) > MAX_CHARS:
         found.append(f'{MAX_CHARS}자를 넘습니다 (현재 {len(text)}자). 더 짧게 쓰세요.')
     if '?' not in text:
@@ -57,11 +76,15 @@ def fallback(seed: str, questions: Sequence[str]) -> str:
     return random.Random(seed).choice(questions)
 
 
+def pick_format(slot: str) -> str:
+    return random.Random(slot).choices(FORMATS, weights=FORMAT_WEIGHTS)[0]
+
+
 def compose_casual(llm: LLMClient, model: str, history: Sequence[HistoryEntry], now: datetime, slot: str,
                    questions: Sequence[str]) -> tuple[str, bool]:
     """(글, 준비된 질문을 썼는지)를 반환합니다."""
     recent = [e.caption for e in history if e.seed == KIND and e.caption][-RECENT:]
-    fmt = random.Random(slot).choice(FORMATS)
+    fmt = pick_format(slot)
     user_input = (f'{context_line(now)}\n이번 형식: {fmt}\n'
                   '최근에 올린 일상글 (겹치지 않게):\n' + ('\n'.join(f'- {t}' for t in recent) or '(없음)'))
     feedback: list[str] = []
