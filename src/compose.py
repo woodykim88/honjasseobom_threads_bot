@@ -45,6 +45,7 @@ class Draft:
     source_url: str
     kind: str = NEWS
     rescued: bool = False     # 검수를 통과하지 못해 문제 줄을 빼고 낸 글 (구제 발행)
+    image_url: str = ''       # 첫 글에 붙일 그림 (블로그 연작만, 2026-10-22)
 
     @property
     def text(self) -> str:
@@ -218,7 +219,7 @@ def compose_blog(llm: LLMClient, models: Models, post: blog.BlogPost, day: date 
     user_input = (f'블로그 글 제목: {post.title}\n{patterns.pattern_brief(post.url)}\n'
                   + (f'{calendar_fact(day)}\n' if day is not None else '') + f'--- 블로그 글 본문 ---\n{post.text}')
     parts, _ = write_checked(llm, models, 'blog', user_input, blog_tail(post), BLOG, source=post.text, day=day)
-    return Draft(post.url, post.title, parts, post.url, BLOG) if parts else None
+    return Draft(post.url, post.title, parts, post.url, BLOG, image_url=post.image_url) if parts else None
 
 
 def compose_news(

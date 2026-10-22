@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from src import blog, channel, compose, guard, history, notifier, schedule, state
 from src.guard import RunResult
 from src.models import Candidate
@@ -34,6 +36,31 @@ class PostDeps:
     load_products: Callable[[], list[Product]] = lambda: []
     load_blog_posts: Callable[[], list[blog.BlogPost]] = lambda: []
     tg_get: Callable[..., Any] | None = None
+    image_ok: Callable[[str], bool] = lambda url: image_reachable(url)
+
+
+IMAGE_CHECK_TIMEOUT = 10
+
+
+def image_reachable(url: str) -> bool:
+    """블로그 그림 JPEG 사본이 실제로 열리는지 (2026-10-22 이전 글은 사본이 없다)."""
+    try:
+        response = requests.head(url, timeout=IMAGE_CHECK_TIMEOUT, allow_redirects=True)
+    except requests.RequestException:
+        return False
+    return response.status_code == 200 and response.headers.get('Content-Type', '').startswith('image/')
+
+
+def create_first(client: Any, draft: compose.Draft, image_ok: Callable[[str], bool]) -> str:
+    """첫 글 컨테이너. 블로그 연작에 그림이 있으면 그림 글로, 그림이 안 열리거나 거절되면 글만 (게시는 막지 않는다)."""
+    if draft.image_url and image_ok(draft.image_url):
+        try:
+            return client.create_image(draft.parts[0], draft.image_url)
+        except ThreadsError as e:
+            if e.fatal:
+                raise
+            print(f'[그림 글 실패] 글만 올립니다: {e}')
+    return client.create_text(draft.parts[0])
 
 
 def _stamp(now: datetime) -> str:
@@ -61,7 +88,7 @@ def post_slot(key: str, deps: PostDeps, llm: LLMClient, past: tuple[history.Hist
               now: datetime) -> history.HistoryEntry:
     draft = compose.compose(llm, deps.models, past, deps.load_candidates, deps.fetch_body, key[:10],
                             schedule.slot_datetime(key).hour, deps.load_products, key, deps.load_blog_posts)
-    container = deps.client.create_text(draft.parts[0])
+    container = create_first(deps.client, draft, deps.image_ok)
     entry = history.HistoryEntry(slot=key, status=PUBLISHING, title=draft.title, seed=draft.kind,
                                  doc_id=draft.key, source_url=draft.source_url, caption=draft.text,
                                  note=RESCUED_NOTE if draft.rescued else '', updated_at=_stamp(now))

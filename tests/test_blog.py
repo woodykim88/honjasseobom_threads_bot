@@ -96,3 +96,25 @@ def test_blog_slot_falls_back_to_casual_when_no_posts(monkeypatch):
 def test_parse_feed_drops_posts_off_channel_topic(title):
     entry = {**ENTRY, 'title': {'$t': title}, 'category': [{'term': '생활경제'}, {'term': '재테크'}]}
     assert blog.parse_feed(json.dumps({'feed': {'entry': [entry]}})) == []
+
+
+# --- 블로그 그림 붙이기 (2026-10-22) ---
+
+R2 = 'https://pub-x.r2.dev/posts/2026/10/2026-10-22-abcd1234'
+
+
+def test_parse_feed_picks_body_illustration_as_jpeg():
+    """블로그 첫 본문 그림(-b1)의 JPEG 사본 주소를 쓴다. 대표 그림은 글자 상자가 있어 쓰지 않는다."""
+    content = f'<img src="{R2}.webp"><p>퇴사 후 고용24에서 신청해요.</p><img src="{R2}-b1.webp"><p>180일 이상.</p>'
+    entry = {**ENTRY, 'content': {'$t': content}}
+    post = blog.parse_feed(json.dumps({'feed': {'entry': [entry]}}))[0]
+    assert post.image_url == f'{R2}-b1.jpg'
+    assert blog.parse_feed(FEED)[0].image_url == ''
+
+
+def test_compose_blog_carries_image_url(monkeypatch):
+    monkeypatch.setattr(channel, 'BLOG_HOUR', 20)
+    post = blog.BlogPost('실업급여 신청 방법', 'https://www.woodyway88.com/2026/10/a.html', ('생활가이드',),
+                         '퇴사 후 고용24에서 신청해요. ' * 20, f'{R2}-b1.jpg')
+    draft, _ = compose_at(blog_day(), 20, [post], {'ThreadPost': [BLOG_POST], 'FactCheck': [OK_FACTS]})
+    assert draft.image_url == f'{R2}-b1.jpg'

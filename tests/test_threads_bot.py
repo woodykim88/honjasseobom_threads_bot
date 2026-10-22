@@ -508,3 +508,41 @@ def test_news_writer_prompt_asks_for_natural_repost_line():
     assert '리포스트 부르는 법' in writer and '조건을 거는 거래' in writer
     assert '리포스트' in (PROMPTS_DIR / 'factcheck.md').read_text(encoding='utf-8')
     assert channel.CROSS_PROMO == ''
+
+
+def test_threads_client_create_image():
+    c, graph = client(OK_ROUTES)
+    assert c.create_image('hi', 'https://x/a.jpg') == 'box'
+    assert graph.calls[0][2]['media_type'] == 'IMAGE' and graph.calls[0][2]['image_url'] == 'https://x/a.jpg'
+
+
+class FirstPostClient:
+    def __init__(self, image_error=None):
+        self.calls, self.image_error = [], image_error
+
+    def create_image(self, text, url):
+        self.calls.append(('image', url))
+        if self.image_error:
+            raise self.image_error
+        return 'img-box'
+
+    def create_text(self, text, reply_to=''):
+        self.calls.append(('text', ''))
+        return 'text-box'
+
+
+def test_first_container_uses_image_only_when_reachable():
+    """2026-10-22: 블로그 연작 첫 글에 블로그 그림을 붙인다. 그림 주소가 안 열리거나 Threads가 거절하면 글만 올린다."""
+    from src import post
+    image_draft = compose.Draft('k', 't', ('첫 글',), 'https://b', compose.BLOG, image_url='https://x/a.jpg')
+    ok = FirstPostClient()
+    assert post.create_first(ok, image_draft, image_ok=lambda u: True) == 'img-box'
+    down = FirstPostClient()
+    assert post.create_first(down, image_draft, image_ok=lambda u: False) == 'text-box' and down.calls == [('text', '')]
+    refused = FirstPostClient(ThreadsError('bad image'))
+    assert post.create_first(refused, image_draft, image_ok=lambda u: True) == 'text-box'
+    fatal = FirstPostClient(ThreadsError('bad token', 190, fatal=True))
+    with pytest.raises(ThreadsError):
+        post.create_first(fatal, image_draft, image_ok=lambda u: True)
+    plain = FirstPostClient()
+    assert post.create_first(plain, compose.Draft('k', 't', ('첫 글',), 'https://b'), image_ok=lambda u: True) == 'text-box'

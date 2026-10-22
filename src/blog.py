@@ -21,6 +21,8 @@ OFF_TOPIC_WORDS = ('증권', '금리', '물가', 'PCE', '환율', '주가', '코
 MAX_BODY_CHARS = 6000
 _TAG_RE = re.compile(r'<(script|style)[^>]*>.*?</\1>|<[^>]+>', re.S)
 _BREAK_RE = re.compile(r'</(p|div|li|h[1-6]|tr)>|<br\s*/?>', re.I)
+# 블로그 첫 본문 그림(-b1.webp). 구글 블로그 봇이 같은 경로에 Threads용 JPEG 사본(-b1.jpg)을 둔다 (2026-10-22)
+_BODY_IMAGE_RE = re.compile(r'(https://[^"\s]+-b1)\.webp')
 
 
 @dataclass(frozen=True)
@@ -29,12 +31,18 @@ class BlogPost:
     url: str
     labels: tuple[str, ...]
     text: str
+    image_url: str = ''  # 연작 첫 글에 붙일 블로그 그림 (JPEG). 없으면 글만
 
 
 def html_to_text(raw: str) -> str:
     text = html.unescape(_TAG_RE.sub('', _BREAK_RE.sub('\n', raw)))
     lines = (re.sub(r'[ \t]+', ' ', ln).strip() for ln in text.splitlines())
     return '\n'.join(ln for ln in lines if ln)[:MAX_BODY_CHARS]
+
+
+def body_image_url(raw: str) -> str:
+    match = _BODY_IMAGE_RE.search(raw)
+    return f'{match.group(1)}.jpg' if match else ''
 
 
 def is_life_post(labels: tuple[str, ...]) -> bool:
@@ -56,9 +64,10 @@ def parse_feed(payload: str) -> list[BlogPost]:
         url = next((link.get('href', '') for link in entry.get('link', []) if link.get('rel') == 'alternate'), '')
         labels = tuple(c.get('term', '') for c in entry.get('category', []))
         title = entry.get('title', {}).get('$t', '').strip()
-        text = html_to_text(entry.get('content', {}).get('$t', ''))
+        raw = entry.get('content', {}).get('$t', '')
+        text = html_to_text(raw)
         if url.startswith('https://') and title and text and is_life_post(labels) and is_on_topic(title):
-            posts.append(BlogPost(title=title, url=url, labels=labels, text=text))
+            posts.append(BlogPost(title=title, url=url, labels=labels, text=text, image_url=body_image_url(raw)))
     return posts
 
 
