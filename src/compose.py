@@ -253,6 +253,12 @@ def compose_news(
     raise PipelineError('게시할 글을 만들지 못했습니다 (읽을 수 있는 기사가 없음: RSS·기사 사이트 장애 가능성).')
 
 
+def compose_casual_draft(llm: LLMClient, models: Models, history: Sequence[HistoryEntry], slot: str) -> Draft:
+    text, canned = casual.compose_casual(llm, models.writer, history, schedule.slot_datetime(slot), slot,
+                                         channel.CASUAL_FALLBACKS)
+    return Draft(f'{casual.KIND}:{slot}', text.splitlines()[0][:40], (text,), '', casual.KIND, rescued=canned)
+
+
 def compose(
     llm: LLMClient,
     models: Models,
@@ -265,17 +271,18 @@ def compose(
     slot: str = '',
     load_blog_posts: Callable[[], list[blog.BlogPost]] = lambda: [],
 ) -> Draft:
-    """일상글 슬롯이면 일상글, 블로그 슬롯이면 블로그 날엔 블로그 연작·아닌 날엔 일상글, 제품 슬롯·제품 날이면 제품 추천, 그 밖엔 뉴스 글.
+    """일상글 슬롯이면 일상글, 블로그 슬롯이면 블로그 날엔 블로그 연작(맞는 글이 없으면 일상글)·아닌 날엔 일상글, 제품 슬롯·제품 날이면 제품 추천, 그 밖엔 뉴스 글.
     블로그·제품 글을 못 만들면 뉴스 글로 대신한다."""
     day = (schedule.slot_datetime(slot) if slot else datetime.strptime(today, '%Y-%m-%d')).date()
     evening_casual = (slot and channel.BLOG_HOUR is not None and slot_hour == channel.BLOG_HOUR
                       and not is_blog_day(day))
     if slot and (slot_hour == channel.CASUAL_HOUR or evening_casual):
-        text, canned = casual.compose_casual(llm, models.writer, history, schedule.slot_datetime(slot), slot,
-                                             channel.CASUAL_FALLBACKS)
-        return Draft(f'{casual.KIND}:{slot}', text.splitlines()[0][:40], (text,), '', casual.KIND, rescued=canned)
+        return compose_casual_draft(llm, models, history, slot)
     if channel.BLOG_HOUR is not None and slot_hour == channel.BLOG_HOUR:
         post = next_blog_post(load_blog_posts(), history)
+        if post is None and slot:  # 2026-10-22: 채널과 맞는 블로그 글이 없으면 반응이 더 좋은 일상글로
+            print('[블로그] 올릴 블로그 글이 없어 일상글로 대신합니다.')
+            return compose_casual_draft(llm, models, history, slot)
         if post is None:
             print('[블로그] 올릴 블로그 글이 없어 뉴스 글로 대신합니다.')
         else:

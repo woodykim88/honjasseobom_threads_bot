@@ -84,9 +84,15 @@ def test_blog_slot_on_other_day_is_casual(monkeypatch):
     assert draft.kind == 'casual'
 
 
-def test_blog_slot_falls_back_to_news_when_no_posts(monkeypatch):
+def test_blog_slot_falls_back_to_casual_when_no_posts(monkeypatch):
+    from src.casual import CasualPost
     monkeypatch.setattr(channel, 'BLOG_HOUR', 20)
-    facts = OK_FACTS
-    draft, _ = compose_at(blog_day(), 20, [], {'SelectionResult': [selection((0, 8))],
-                                               'ThreadPost': [ThreadPost(hook=HOOK, tips=TIPS)], 'FactCheck': [facts]})
-    assert draft.kind == compose.NEWS
+    draft, _ = compose_at(blog_day(), 20, [], {'CasualPost': [CasualPost(text='라면 vs 햇반, 급할 땐 뭐부터 집어?')]})
+    assert draft.kind == 'casual'
+
+
+@pytest.mark.parametrize('title', ['미국 PCE 물가 3.4%, 금리 인상 동력은?', '증권사 전산장애, 3년 피해액 73억원',
+                                   '부산진해경자청 투자 상담, 기관을 제한 없이 고른다', '어르신 독감 예방접종, 나이별 시작일'])
+def test_parse_feed_drops_posts_off_channel_topic(title):
+    entry = {**ENTRY, 'title': {'$t': title}, 'category': [{'term': '생활경제'}, {'term': '재테크'}]}
+    assert blog.parse_feed(json.dumps({'feed': {'entry': [entry]}})) == []
