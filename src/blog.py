@@ -19,6 +19,8 @@ AI_LABELS = ('AI활용', 'AI사용법', 'AI스킬', 'IT트렌드', '업무생산
 OFF_TOPIC_WORDS = ('증권', '금리', '물가', 'PCE', '환율', '주가', '코스피', '투자', '경자청', '경제자유구역',
                    '어르신', '노인', '상속')
 MAX_BODY_CHARS = 6000
+# 이 날부터 블로그 그림이 풍자 일러스트 스타일이고 JPEG 사본이 있다. 연작은 이런 글을 먼저 고른다 (2026-10-22)
+STYLE_SINCE = '2026-10-21'
 _TAG_RE = re.compile(r'<(script|style)[^>]*>.*?</\1>|<[^>]+>', re.S)
 _BREAK_RE = re.compile(r'</(p|div|li|h[1-6]|tr)>|<br\s*/?>', re.I)
 # 블로그 첫 본문 그림(-b1.webp). 구글 블로그 봇이 같은 경로에 Threads용 JPEG 사본(-b1.jpg)을 둔다 (2026-10-22)
@@ -32,6 +34,7 @@ class BlogPost:
     labels: tuple[str, ...]
     text: str
     image_url: str = ''  # 연작 첫 글에 붙일 블로그 그림 (JPEG). 없으면 글만
+    published: str = ''  # 블로그 발행일 YYYY-MM-DD
 
 
 def html_to_text(raw: str) -> str:
@@ -67,7 +70,9 @@ def parse_feed(payload: str) -> list[BlogPost]:
         raw = entry.get('content', {}).get('$t', '')
         text = html_to_text(raw)
         if url.startswith('https://') and title and text and is_life_post(labels) and is_on_topic(title):
-            posts.append(BlogPost(title=title, url=url, labels=labels, text=text, image_url=body_image_url(raw)))
+            published = entry.get('published', {}).get('$t', '')[:10]
+            posts.append(BlogPost(title=title, url=url, labels=labels, text=text, image_url=body_image_url(raw),
+                                  published=published))
     return posts
 
 

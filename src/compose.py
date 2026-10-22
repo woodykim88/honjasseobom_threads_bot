@@ -205,9 +205,12 @@ def compose_product(llm: LLMClient, models: Models, product: Product, day: date 
 
 
 def next_blog_post(posts: Sequence[blog.BlogPost], history: Sequence[HistoryEntry]) -> blog.BlogPost | None:
-    """아직 안 올린 블로그 글 중 가장 오래된 것부터 (최신 글은 블로그 쪽 노출이 아직 약해 뒤로 미룬다)."""
+    """아직 안 올린 블로그 글 중 가장 오래된 것부터 (최신 글은 블로그 쪽 노출이 아직 약해 뒤로 미룬다).
+    2026-10-22: 그림이 붙는 새 스타일 글(blog.STYLE_SINCE 이후)을 먼저 고른다."""
     used = {e.doc_id for e in history if e.doc_id and e.status in ('PUBLISHED', 'PUBLISHING', 'SKIPPED')}
-    return next((p for p in reversed(posts) if p.url not in used), None)
+    fresh = [p for p in reversed(posts) if p.url not in used]
+    illustrated = [p for p in fresh if p.image_url and p.published >= blog.STYLE_SINCE]
+    return (illustrated or fresh or [None])[0]
 
 
 def is_blog_day(day: date) -> bool:

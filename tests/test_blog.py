@@ -118,3 +118,19 @@ def test_compose_blog_carries_image_url(monkeypatch):
                          '퇴사 후 고용24에서 신청해요. ' * 20, f'{R2}-b1.jpg')
     draft, _ = compose_at(blog_day(), 20, [post], {'ThreadPost': [BLOG_POST], 'FactCheck': [OK_FACTS]})
     assert draft.image_url == f'{R2}-b1.jpg'
+
+
+def test_next_blog_post_prefers_new_style_illustration_posts():
+    """2026-10-22: 그림이 붙는 새 스타일 글(10/21 이후 발행)을 먼저, 없으면 예전처럼 가장 오래된 글부터."""
+    old = blog.BlogPost('예전 글', 'https://w/old', ('생활가이드',), '본문', '', '2026-10-05')
+    new1 = blog.BlogPost('새 글1', 'https://w/n1', ('생활가이드',), '본문', 'https://r2/n1-b1.jpg', '2026-10-21')
+    new2 = blog.BlogPost('새 글2', 'https://w/n2', ('생활가이드',), '본문', 'https://r2/n2-b1.jpg', '2026-10-22')
+    feed_order = [new2, new1, old]  # 피드는 최신순
+    assert compose.next_blog_post(feed_order, []).title == '새 글1'
+    used = [history.HistoryEntry('s', 'PUBLISHED', doc_id=u) for u in ('https://w/n1', 'https://w/n2')]
+    assert compose.next_blog_post(feed_order, used).title == '예전 글'
+
+
+def test_parse_feed_reads_published_date():
+    entry = {**ENTRY, 'published': {'$t': '2026-10-22T08:00:00.000+09:00'}}
+    assert blog.parse_feed(json.dumps({'feed': {'entry': [entry]}}))[0].published == '2026-10-22'
