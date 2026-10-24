@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from src import blog, casual, channel, kr_calendar, patterns, quality, rescue, schedule, selector
+from src import blog, casual, channel, kr_calendar, openai_fallback, patterns, quality, rescue, schedule, selector
 from src.history import HistoryEntry
 from src.llm import LLMClient, load_prompt
 from src.models import Candidate, ThreadPost
@@ -245,8 +245,14 @@ def compose_news(
         user_input = (f'매체: {article.publisher}\n기사 제목: {article.title}\n독자 포인트: {article.angle}\n'
                       f'{patterns.pattern_brief(article.doc_id)}\n'
                       + (f'{calendar_fact(day)}\n' if day is not None else '') + f'--- 기사 본문 ---\n{body}')
-        parts, failed = write_checked(llm, models, 'writer', user_input, source_tail(article, promo), NEWS,
-                                      source=body, article=article, day=day)
+        try:
+            parts, failed = write_checked(llm, models, 'writer', user_input, source_tail(article, promo), NEWS,
+                                          source=body, article=article, day=day)
+        except Exception as exc:  # 2026-10-24: 화상 기사가 모델 콘텐츠 필터에 걸려 회차 전체가 멈췄다
+            if not openai_fallback.is_content_filtered(exc):
+                raise
+            print(f'[기사 건너뜀] 모델 콘텐츠 필터에 걸림: {article.title[:40]}')
+            continue
         if parts:
             return Draft(article.doc_id, article.title, parts, article.link, rescued=failed is not None)
         if failed:
