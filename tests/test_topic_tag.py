@@ -38,5 +38,6 @@ def test_rejected_topic_tag_falls_back_to_plain_post(monkeypatch):
 
 
 def test_channel_topic_tag_is_valid():
-    tag = threads._topic_tag()
+    from datetime import date
+    tag = threads._topic_tag(date(2026, 10, 24))  # 날짜 고정: 태그를 끄는 실험일에도 테스트가 흔들리지 않게
     assert 1 <= len(tag) <= 50 and '.' not in tag and '&' not in tag

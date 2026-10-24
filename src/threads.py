@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import requests
@@ -70,9 +71,13 @@ def _json(response: requests.Response) -> dict[str, Any]:
     return data
 
 
-def _topic_tag() -> str:
-    """채널 토픽 태그 (2026-10-10: 팔로워가 10명대라 토픽 피드·검색 노출을 얻으려고 첫 글에 붙인다). 1~50자, 마침표·& 불가."""
+def _topic_tag(today: date | None = None) -> str:
+    """채널 토픽 태그 (2026-10-10: 팔로워가 10명대라 토픽 피드·검색 노출을 얻으려고 첫 글에 붙인다). 1~50자, 마침표·& 불가.
+    channel.TOPIC_TAG_OFF_DATES에 든 날(KST)은 붙이지 않는다."""
     from src import channel  # 채널 설정이 없는 테스트에서도 이 모듈을 쓸 수 있게 늦게 읽는다
+    today = today or datetime.now(timezone(timedelta(hours=9))).date()
+    if today.isoformat() in getattr(channel, 'TOPIC_TAG_OFF_DATES', ()):
+        return ''
     tag = str(getattr(channel, 'TOPIC_TAG', '') or '').strip()
     return tag if 1 <= len(tag) <= 50 and '.' not in tag and '&' not in tag else ''
 

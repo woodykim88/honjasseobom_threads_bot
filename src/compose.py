@@ -189,6 +189,8 @@ def next_product(products: Sequence[Product], history: Sequence[HistoryEntry]) -
 
 def is_product_day(day: date) -> bool:
     """제품 글을 올리는 날인지 (channel.PRODUCT_DAY_PARITY: 날짜 서수의 홀짝, None이면 매일)."""
+    if day.isoformat() in getattr(channel, 'PRODUCT_OFF_DATES', ()):
+        return False
     parity = getattr(channel, 'PRODUCT_DAY_PARITY', None)  # 제품 글이 없는 채널엔 설정이 없다
     return parity is None or day.toordinal() % 2 == parity
 
