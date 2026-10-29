@@ -512,12 +512,19 @@ def test_reply_job_skips_when_paused(monkeypatch):
     assert r.outcome == 'skipped'
 
 
-def test_news_writer_prompt_asks_for_natural_repost_line():
+def test_news_writer_prompt_bans_direct_engagement_asks():
+    """2026-10-30: 리포스트 부탁 줄 대신 '오늘 뭐 하면 됨' 한 줄, 직접 부탁은 검수에서 탈락."""
     from src.llm import PROMPTS_DIR
     writer = (PROMPTS_DIR / 'writer.md').read_text(encoding='utf-8')
-    assert '리포스트 부르는 법' in writer and '조건을 거는 거래' in writer
-    assert '리포스트' in (PROMPTS_DIR / 'factcheck.md').read_text(encoding='utf-8')
+    assert '다시 꺼내 보고 싶게 만드는 법' in writer and '리포스트 부르는 법' not in writer
     assert channel.CROSS_PROMO == ''
+
+
+def test_direct_engagement_ask_and_ai_tone_are_rejected():
+    assert any('직접 참여 부탁' in i for i in quality.rule_issues('자취하는 동생 생각나면 리포스트 ㄱㄱ'))
+    assert any('직접 참여 부탁' in i for i in quality.rule_issues('공감되면 좋아요 눌러'))
+    assert any('AI 말투' in i for i in quality.rule_issues('결론적으로 난방비가 오른대'))
+    assert quality.rule_issues('댓글에 정리함 👇 너는 보일러 몇 도로 버텨?') == []
 
 
 def test_threads_client_create_image():

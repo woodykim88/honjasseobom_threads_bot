@@ -16,6 +16,10 @@ FIRST_PERSON_PATTERNS = (
 )
 _FIRST_PERSON_RE = re.compile('|'.join(FIRST_PERSON_PATTERNS))
 _LINK_RE = re.compile(r'https?://|www\.')
+# 2026-10-30 조사 교훈: Meta는 "리포스트해·태그해·댓글 달아" 같은 직접 참여 부탁을 강등하고, 잦으면 프로필 추천을 막는다.
+ENGAGEMENT_ASK = re.compile(r'(리포스트|태그|공유|좋아요|팔로우|댓글)\s?(해\s?줘|해\s?둬|해\s?둠|해\s?두|ㄱㄱ|눌러|달아|남겨|부탁|하면)')
+# AI가 쓴 티가 나는 보고서 말투 (요약체는 스크롤을 넘기게 만든다)
+AI_TONE = ('알아보겠습니다', '살펴보겠습니다', '정리해 드릴게요', '정리해 드릴께요', '결론적으로', '요약하자면')
 # 사실검증의 생각하는 양 (None = 모델 기본값). 9/28 'low'로 해 봤더니 후킹 문장·비유까지 '근거 없는 사실'로
 # 잡아 원고 재작성(비싼 원고 모델 호출)이 늘어서 기본값으로 되돌렸다.
 CHECK_EFFORT: str | None = None
@@ -56,6 +60,12 @@ def rule_issues(body: str, tail: str = '') -> list[str]:
         issues.append('본문에 링크를 넣지 마세요 (코드가 붙입니다).')
     if body.count('#') > 0:
         issues.append('해시태그는 쓰지 마세요.')
+    ask = ENGAGEMENT_ASK.search(body)
+    if ask:
+        issues.append(f'직접 참여 부탁("{ask.group(0)}")을 빼세요. Meta가 노출을 줄입니다. 공감·질문으로만 반응을 부르세요.')
+    tone = [w for w in AI_TONE if w in body]
+    if tone:
+        issues.append(f'보고서·AI 말투를 빼고 친구한테 말하듯 쓰세요: {", ".join(tone)}')
     return issues
 
 
