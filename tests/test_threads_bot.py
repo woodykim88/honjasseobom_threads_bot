@@ -364,6 +364,16 @@ def test_casual_slot_writes_short_post_without_links(monkeypatch):
     assert draft.key == 'casual:2026-09-27T12:30' and not draft.rescued and len(client.requests) == 1
 
 
+def test_extra_casual_hour_also_writes_casual(monkeypatch):
+    """2026-10-30: 08:00(CASUAL_HOUR)에 더해 12:30(CASUAL_EXTRA_HOURS)도 일상글."""
+    monkeypatch.setattr(channel, 'CASUAL_HOUR', 8)
+    monkeypatch.setattr(channel, 'CASUAL_EXTRA_HOURS', (12,))
+    llm, _ = fake_llm({'CasualPost': [CasualPost(text='가을 장바구니에 슬쩍 늘어난 거 하나만 말해 줘?')]})
+    draft = compose.compose(llm, MODELS, (), lambda: [], lambda a: None, '2026-10-30', 12, lambda: [],
+                            '2026-10-30T12:30')
+    assert draft.kind == casual.KIND and draft.key == 'casual:2026-10-30T12:30'
+
+
 def test_casual_falls_back_to_prepared_question(monkeypatch):
     monkeypatch.setattr(channel, 'CASUAL_HOUR', 12)
     bad = CasualPost(text='어제 내가 써봤는데 무조건 좋아 https://x.com')

@@ -288,7 +288,7 @@ def compose(
     day = (schedule.slot_datetime(slot) if slot else datetime.strptime(today, '%Y-%m-%d')).date()
     evening_casual = (slot and channel.BLOG_HOUR is not None and slot_hour == channel.BLOG_HOUR
                       and not is_blog_day(day))
-    if slot and (slot_hour == channel.CASUAL_HOUR or evening_casual):
+    if slot and (slot_hour == channel.CASUAL_HOUR or slot_hour in channel.CASUAL_EXTRA_HOURS or evening_casual):
         return compose_casual_draft(llm, models, history, slot)
     if channel.BLOG_HOUR is not None and slot_hour == channel.BLOG_HOUR:
         post = next_blog_post(load_blog_posts(), history)
