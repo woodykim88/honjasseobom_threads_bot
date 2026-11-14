@@ -181,10 +181,16 @@ def rescue_best(attempts: Sequence[Attempt]) -> Draft | None:
     return None
 
 
+def _product_key(url: str) -> str:
+    """쿠팡 링크의 ?subid=… (11/14 경로 표시)는 빼고 비교한다. 예전 기록엔 없어서 붙은 채로 비교하면 재게시된다."""
+    return url.split('?', 1)[0] if 'link.coupang.com/' in url else url
+
+
 def next_product(products: Sequence[Product], history: Sequence[HistoryEntry]) -> Product | None:
-    used = {e.doc_id for e in history if e.doc_id and e.status in ('PUBLISHED', 'PUBLISHING', 'SKIPPED')}
+    used = {_product_key(e.doc_id) for e in history
+            if e.doc_id and e.status in ('PUBLISHED', 'PUBLISHING', 'SKIPPED')}
     ordered = list(reversed(products)) if channel.PRODUCT_FROM_END else list(products)
-    return next((p for p in ordered if p.url not in used), None)
+    return next((p for p in ordered if _product_key(p.url) not in used), None)
 
 
 def is_product_day(day: date) -> bool:

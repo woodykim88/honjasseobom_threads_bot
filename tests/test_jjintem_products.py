@@ -60,3 +60,14 @@ def test_four_slots_allowed():
     assert schedule.parse_times('08:00,12:30,20:00,21:00') == ((8, 0), (12, 30), (20, 0), (21, 0))
     with pytest.raises(schedule.ScheduleError):
         schedule.parse_times('07:00,08:00,12:30,20:00,21:00')
+
+
+def test_next_product_ignores_subid_when_matching_history():
+    """11/14 찐템 피드 링크에 ?subid=threads 를 붙임 → 예전 기록(subid 없음)과 같은 상품으로 봐야 재게시 안 됨."""
+    from src.history import HistoryEntry
+    from src.products import Product
+    old = Product(name='찜기', url='https://link.coupang.com/a/x5?subid=threads')
+    new = Product(name='문틈막이', url='https://link.coupang.com/a/x4?subid=threads')
+    history = [HistoryEntry(slot='s', status='PUBLISHED', doc_id='https://link.coupang.com/a/x5')]
+    assert compose.next_product([new, old], history) is new
+    assert compose.next_product([old], history) is None
