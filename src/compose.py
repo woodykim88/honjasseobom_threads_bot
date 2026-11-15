@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from src import blog, casual, channel, kr_calendar, openai_fallback, patterns, quality, rescue, schedule, selector
+from src import blog, casual, channel, kr_calendar, openai_fallback, patterns, quality, rescue, schedule, selector, tools
 from src.history import HistoryEntry
 from src.llm import LLMClient, load_prompt
 from src.models import Candidate, ThreadPost
@@ -277,6 +277,12 @@ def compose_casual_draft(llm: LLMClient, models: Models, history: Sequence[Histo
     return Draft(f'{casual.KIND}:{slot}', text.splitlines()[0][:40], (text,), '', casual.KIND, rescued=canned)
 
 
+def compose_tool_draft(llm: LLMClient, models: Models, history: Sequence[HistoryEntry], slot: str) -> Draft:
+    tool, text, canned = tools.compose_tool(llm, models.writer, history, schedule.slot_datetime(slot), slot)
+    return Draft(f'{tools.KIND}:{tool.slug}', text.splitlines()[0][:40], (text, tools.reply_text(tool)),
+                 tools.tool_url(tool), tools.KIND, rescued=canned)
+
+
 def compose(
     llm: LLMClient,
     models: Models,
@@ -296,6 +302,8 @@ def compose(
                       and not is_blog_day(day))
     if slot and (slot_hour == channel.CASUAL_HOUR or slot_hour in channel.CASUAL_EXTRA_HOURS or evening_casual):
         return compose_casual_draft(llm, models, history, slot)
+    if slot and slot_hour in channel.TOOL_HOURS:  # 2026-11-16: 계산기 연결 글
+        return compose_tool_draft(llm, models, history, slot)
     if channel.BLOG_HOUR is not None and slot_hour == channel.BLOG_HOUR:
         post = next_blog_post(load_blog_posts(), history)
         if post is None and slot:  # 2026-10-22: 채널과 맞는 블로그 글이 없으면 반응이 더 좋은 일상글로

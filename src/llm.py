@@ -22,7 +22,7 @@ class LLMError(Exception):
 
 
 # 글쓰기 프롬프트에는 우리 채널 최근 성과(잘 된 글·안 된 글, src/performance.py가 매일 갱신)를 붙인다
-WRITING_PROMPTS = frozenset({'writer', 'product', 'general', 'casual', 'persona'})
+WRITING_PROMPTS = frozenset({'writer', 'product', 'general', 'casual', 'persona', 'tool'})
 PERFORMANCE_PATH = PROMPTS_DIR.parent / 'data' / 'performance.md'
 
 

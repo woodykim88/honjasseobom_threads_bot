@@ -83,7 +83,9 @@ PRIORITY_WORDS = (
 CASUAL_HOUR: int | None = 8
 # 2026-10-30 사용자 승인: 10/5 이후 일상글 중앙값 114 vs 뉴스 30·블로그 33·상품 25라서 12:30도 일상글.
 # PUBLISH_TIMES 변수를 08:00,12:30 두 번으로 줄였다 (20:00 블로그·21:00 상품 슬롯은 설정만 남아 있고 쉬는 중).
-CASUAL_EXTRA_HOURS: tuple[int, ...] = (12,)
+# 2026-11-16 사용자 결정: 12:30은 계산기 연결 글(src/tools.py)로 바꿨다. 2주 시험(~11/30), GA utm_source=threads로 판정.
+CASUAL_EXTRA_HOURS: tuple[int, ...] = ()
+TOOL_HOURS: tuple[int, ...] = (12,)
 CASUAL_FALLBACKS = (  # AI 글이 검수에 두 번 떨어졌을 때 쓰는 준비된 질문 (회차를 건너뛰지 않기 위해)
     '자취템 중에 이건 진짜 잘 샀다 싶은 거 하나만 말해 줘?',
     '장 볼 때 매번 꼭 사게 되는 거 하나씩 말해 보자 🛒 뭐 있어?',
