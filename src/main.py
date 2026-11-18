@@ -20,7 +20,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src import (blog, channel, collector, compose, guard, history, notifier, performance, post, products, providers, replies,
+from src import (blog, followup, channel, collector, compose, guard, history, notifier, performance, post, products, providers, replies,
                  runlog, schedule, state, token_refresh)
 from src.guard import RunResult
 from src.http_client import http_get
@@ -77,7 +77,13 @@ def run_job(job: str, env: Mapping[str, str], ai: providers.AISettings | None,
         if paused:
             return RunResult('skipped', paused)
         llm = LLMClient(providers.build_text_backend(ai.text_provider, env))
-        return replies.run_replies(ThreadsClient(load_threads_config(env)), llm, ai.fast_model, telegram)
+        client = ThreadsClient(load_threads_config(env))
+        answered = replies.run_replies(client, llm, ai.fast_model, telegram)
+        # 2026-11-18: 반응 좋은 글에 작성자 덧글 (실패해도 답글 결과는 그대로)
+        extra = followup.run_followups(client, LLMClient(providers.build_text_backend(ai.text_provider, env)),
+                                       ai.fast_model, telegram)
+        return RunResult(answered.outcome if answered.outcome != 'skipped' else extra.outcome,
+                         f'{answered.message} / {extra.message}', llm_calls=answered.llm_calls + extra.llm_calls)
     if job == 'insights':
         return performance.run_insights(ThreadsClient(load_threads_config(env)), datetime.now(schedule.KST))
     if job == 'refresh-token':
