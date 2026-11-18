@@ -79,3 +79,7 @@ def test_followup_with_link_or_fake_story_is_dropped(tmp_path):
     llm, _ = fake_llm({'FollowupDraft': [bad, bad]})
     followup.run_followups(client, llm, 'f', None, NOW, tmp_path / 'f.json')
     assert client.created == []
+
+
+def test_spelling_fix():
+    assert followup.fix_spelling('연차는 몇 일이야?') == '연차는 며칠이야?'

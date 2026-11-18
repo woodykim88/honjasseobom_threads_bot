@@ -71,6 +71,11 @@ def hot_posts(client: ThreadsClient, done: set[str], now: datetime) -> list[dict
     return sorted(found, key=lambda p: -p['views'])
 
 
+def fix_spelling(text: str) -> str:
+    """모델이 자주 틀리는 맞춤법 (11/18 첫 덧글 '몇 일이야?')."""
+    return text.replace('몇 일', '며칠').replace('몇일', '며칠')
+
+
 def write_followup(llm: LLMClient, model: str, client: ThreadsClient, post: dict[str, Any]) -> str:
     comments = client.get(f"{post['id']}/replies", {'fields': 'id,text,username,is_reply_owned_by_me'})
     others = [c.get('text', '')[:120] for c in comments.get('data', [])
@@ -80,7 +85,7 @@ def write_followup(llm: LLMClient, model: str, client: ThreadsClient, post: dict
     feedback: list[str] = []
     for _ in range(MAX_ATTEMPTS):
         extra = ('\n\n이전 댓글이 검수에서 떨어졌어:\n' + '\n'.join(f'- {f}' for f in feedback)) if feedback else ''
-        text = llm.parse(model, load_prompt('followup'), user_input + extra, FollowupDraft).text.strip()
+        text = fix_spelling(llm.parse(model, load_prompt('followup'), user_input + extra, FollowupDraft).text.strip())
         feedback = replies.reply_issues(text) + ([] if '?' in text else ['쉬운 질문(물음표)을 하나 넣으세요.'])
         if not feedback:
             return text
